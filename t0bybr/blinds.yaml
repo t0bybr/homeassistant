@@ -88,6 +88,9 @@ blueprint:
     register_max_ticks_limit:
       name: "LOGO Register: max. Fahrweg/-dauer (Ticks-Limit)"
       selector: { number: { min: 1, max: 9999, mode: box } }
+    register_counter:
+      name: "LOGO Register: Counter/Position (für Backup)"
+      selector: { number: { min: 1, max: 9999, mode: box } }
 
     # Skalierung & Sensoren
     max_travel_ticks:
