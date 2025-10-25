@@ -41,17 +41,21 @@ script:
 
     sequence:
       - variables:
+          # Slugs als Strings sicherstellen
+          floor_slug_str: "{{ floor_slug | string }}"
+          room_slug_str: "{{ room_slug | string }}"
+
           # Entitäten ableiten
-          state_entity: "input_select.blinds_{{ floor_slug }}_{{ room_slug }}_state"
-          sequence_id_entity: "input_text.blinds_{{ floor_slug }}_{{ room_slug }}_sequence_id"
-          tilt_enabled_entity: "input_boolean.blinds_{{ floor_slug }}_{{ room_slug }}_tilt_enabled"
-          tilt_current_entity: "input_number.blinds_{{ floor_slug }}_{{ room_slug }}_tilt_current"
-          tilt_target_entity: "input_number.blinds_{{ floor_slug }}_{{ room_slug }}_tilt_target"
-          tilt_ticks_close_entity: "input_number.blinds_{{ floor_slug }}_{{ room_slug }}_tilt_ticks_close"
-          tilt_ticks_open_entity: "input_number.blinds_{{ floor_slug }}_{{ room_slug }}_tilt_ticks_open"
-          min_motor_ticks_entity: "input_number.blinds_{{ floor_slug }}_{{ room_slug }}_min_motor_ticks"
+          state_entity: "input_select.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_state"
+          sequence_id_entity: "input_text.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_sequence_id"
+          tilt_enabled_entity: "input_boolean.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_tilt_enabled"
+          tilt_current_entity: "input_number.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_tilt_current"
+          tilt_target_entity: "input_number.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_tilt_target"
+          tilt_ticks_close_entity: "input_number.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_tilt_ticks_close"
+          tilt_ticks_open_entity: "input_number.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_tilt_ticks_open"
+          min_motor_ticks_entity: "input_number.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_min_motor_ticks"
           position_sensor: "sensor.mosquitto_broker_mqtt_logo_hr_104_position_raw"
-          register_target_entity: "input_number.blinds_{{ floor_slug }}_{{ room_slug }}_logo_register_target"
+          register_target_entity: "input_number.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_logo_register_target"
           status_sensor: "sensor.mosquitto_broker_mqtt_logo_hr_104_status"
 
           # Werte lesen
@@ -221,6 +225,11 @@ script:
         description: "Raum-Slug"
 
     sequence:
+      - variables:
+          # Slugs als Strings sicherstellen
+          floor_slug_str: "{{ floor_slug | string }}"
+          room_slug_str: "{{ room_slug | string }}"
+
       # Fenster starten, falls nicht aktiv
       - if:
           - condition: template
@@ -240,8 +249,8 @@ script:
                 click_counter_entity_id: "{{ click_counter_entity_id }}"
                 last_direction_text_entity_id: "{{ last_direction_text_entity_id }}"
                 cover_entity_id: "{{ cover_entity_id }}"
-                floor_slug: "{{ floor_slug }}"
-                room_slug: "{{ room_slug }}"
+                floor_slug: "{{ floor_slug_str }}"
+                room_slug: "{{ room_slug_str }}"
 
       # Klick zählen
       - action: counter.increment
@@ -282,10 +291,14 @@ script:
     sequence:
       - delay: "00:00:02" # Fensterlänge
       - variables:
+          # Slugs als Strings sicherstellen
+          floor_slug_str: "{{ floor_slug | string }}"
+          room_slug_str: "{{ room_slug | string }}"
+
           clicks: "{{ states(click_counter_entity_id) | int(0) }}"
           dir: "{{ states(last_direction_text_entity_id) }}"
-          tilt_enabled_entity: "input_boolean.blinds_{{ floor_slug }}_{{ room_slug }}_tilt_enabled"
-          state_entity: "input_select.blinds_{{ floor_slug }}_{{ room_slug }}_state"
+          tilt_enabled_entity: "input_boolean.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_tilt_enabled"
+          state_entity: "input_select.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_state"
 
       - choose:
           # ==== Hoch-Taste ====
@@ -309,8 +322,8 @@ script:
                         then:
                           - action: script.util_blinds_apply_tilt
                             data:
-                              floor_slug: "{{ floor_slug }}"
-                              room_slug: "{{ room_slug }}"
+                              floor_slug: "{{ floor_slug_str }}"
+                              room_slug: "{{ room_slug_str }}"
 
                   # 3× up → optionales Script
                   - conditions: "{{ clicks == 3 and (on_up_3 | default('') | string) != '' }}"

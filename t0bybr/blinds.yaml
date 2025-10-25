@@ -1,45 +1,50 @@
 # =========================================================
-# README · Jalousie – LOGO/MQTT Tastersteuerung (Stop/Counter/Tilt)
-# ---------------------------------------------------------
-# Funktionen
-# - Taster Hoch/Runter: Kurz-/Langdruck, Sofort-Stop
-# - Tilt-Steuerung in Ticks: adaptiver, richtungsabhängiger Schritt je Klick/Slider
-# - Fahrende-Erkennung über Statussensor (2/3 → 0/1) mit LOGO-Bestätigung (10000)
-# - HA-Start: Max-Fahrweg/-dauer (Ticks-Limit) in LOGO schreiben
-#
-# Wichtige Signale
-# - position_ticks_sensor: aktueller Weg (Ticks 0..max_travel_ticks)
-# - movement_status_sensor: 0=closed, 1=idle/open, 2=closing, 3=opening
-# - var_tilt_flag_entity_id: input_boolean.*_tilted (manuelles Toggle)
-# - Cover-Tilt: current_tilt_position (Slider im UI) → ruft unser Tilt-Utility
-#
-# Kalibrierung (pro Jalousie im use_blueprint angeben)
-# - open_step_ticks_at_closed / _at_open
-# - close_step_ticks_at_closed / _at_open
-# - min_step_ticks
-# → Siehe Kalibrier-Anleitung unten im Kommentarblock.
-#
-# Fahrprinzip
-# - Tilt-Änderung (Flag/Slider) triggert util_blinds_tilt_step_ticks_dir.
-# - Fahrtende (2/3→0/1) bestätigt LOGO mit 10000, merkt letzte Richtung
-#   und fährt optional (bei Tilt=on) einen zusätzlichen adaptiven Schritt.
+# Jalousie Blueprint – LOGO/MQTT Tastersteuerung mit State Machine
 # =========================================================
-# KALIBRIER-ANLEITUNG (Ticks)
-# 1) max_travel_ticks messen (100% Weg).
-# 2) open_step_ticks_at_closed: unten (≈0 Ticks) klein „hoch“, bis Kipp erkennbar → ΔTicks.
-# 3) open_step_ticks_at_open:   oben (≈max) klein „hoch“ → ΔTicks.
-# 4) close_step_ticks_at_closed: unten klein „runter“ → ΔTicks.
-# 5) close_step_ticks_at_open:   oben klein „runter“ → ΔTicks.
-# 6) min_step_ticks = Mindestschritt (typ. 1–3).
-# Script interpoliert zwischen *_at_closed (r=0) und *_at_open (r=1).
-# Richtung kommt aus var_last_moving_state_number_entity_id (2/3).
+# Features:
+# - State Machine: Klare Zustandsverwaltung (idle, moving_user, moving_automation, etc.)
+# - Taster Hoch/Runter: Kurz-/Langdruck mit Sofort-Stop
+# - Tilt-System: Automatisches Tracking + intelligente Drift-Vermeidung
+# - Sequence-ID: Verhindert Endlosschleifen bei Multi-Step-Operationen
+# - Wind-Sync & Position-Backup: Robuste LOGO-Integration
+#
+# State Machine:
+# - idle: Bereit für neue Befehle
+# - moving_user: Manuelle Tasterbedienung
+# - moving_automation: Automatische Fahrt (Zeit, Szene)
+# - moving_wind: Wind-Schutzfahrt
+# - moving_tilt: Einfache Tilt-Anpassung
+# - adjusting_tilt_ref: Multi-Step Tilt mit Referenzpunkt
+# - recovering_position: LOGO-Neustart, Position-Sync
+#
+# Tilt-System:
+# - tilt_current: Wird automatisch getrackt (0% = vertikal, 100% = horizontal)
+# - tilt_target: Zielneigung (Standard: 75%, konfigurierbar)
+# - tilt_enabled: Toggle via 2× Hoch-Taste
+# - Drift-Vermeidung: Referenz-Methode bei Bewegungen < min_motor_ticks
+#
+# MQTT Signale:
+# - logo/register/set/<target>: Zielposition in Ticks (oder 10000 = Bestätigung)
+# - logo/register32/set/<counter>: Position-Counter Backup
+# - logo/coil/set/<coil>: Motor an/aus (ON/OFF)
+#
+# LOGO Sensoren:
+# - position_ticks_sensor: Aktuelle Position (0..max_travel_ticks)
+# - movement_status_sensor: 0=closed, 1=idle/open, 2=closing, 3=opening
+#
+# Kalibrierung (im use_blueprint angeben):
+# - max_travel_ticks: Maximaler Fahrweg in Ticks (gemessen)
+# - tilt_ticks_close: Ticks von horizontal zu vertikal (z.B. 14)
+# - tilt_ticks_open: Ticks von vertikal zu horizontal (z.B. 15)
+# - min_motor_ticks: Minimale Bewegung die Motor ausführt (typ. 5)
 # =========================================================
 
 blueprint:
-  name: Jalousie – LOGO/MQTT Tastersteuerung (Stop/Counter/Tilt)
+  name: Jalousie – LOGO/MQTT mit State Machine & Tilt
   description: >
-    Tastersteuerung mit Kurz/Langdruck, adaptiver Tilt-Schrittlogik in Ticks
-    und sicherer LOGO-Bestätigung am Fahrtende. Tilt kann per Flag oder Cover-Slider ausgelöst werden.
+    Intelligente Jalousie-Steuerung mit State Machine, automatischem Tilt-Tracking
+    und Drift-Vermeidung. Features: Kurz/Langdruck, 2× Hoch = Tilt Toggle,
+    Sequence-ID gegen Endlosschleifen, Wind-Sync, Position-Backup.
   domain: automation
   input:
     # Identifikation
