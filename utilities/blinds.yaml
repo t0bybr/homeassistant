@@ -71,7 +71,36 @@ script:
       # Prüfen ob Tilt überhaupt aktiv
       - if: "{{ not tilt_enabled }}"
         then:
-          - stop: "Tilt not enabled"
+          # Tilt wurde deaktiviert → Fahre zu 100% (horizontal)
+          - if: "{{ tilt_current != 100 }}"
+            then:
+              - action: input_select.select_option
+                target: { entity_id: "{{ state_entity }}" }
+                data: { option: "moving_tilt" }
+
+              - variables:
+                  ticks_needed: "{{ (tilt_current / 100.0 * tilt_ticks_open) | round(0) | int }}"
+
+              - action: mqtt.publish
+                data:
+                  topic: "logo/register/set/{{ register_target }}"
+                  payload: "{{ current_pos + ticks_needed }}"
+
+              - wait_template: "{{ states(status_sensor) | int(0) in [0,1] }}"
+                timeout: "00:00:10"
+
+              - action: input_number.set_value
+                target: { entity_id: "{{ tilt_current_entity }}" }
+                data: { value: "100" }
+
+          # Cleanup
+          - action: input_text.set_value
+            target: { entity_id: "{{ sequence_id_entity }}" }
+            data: { value: "" }
+          - action: input_select.select_option
+            target: { entity_id: "{{ state_entity }}" }
+            data: { option: "idle" }
+          - stop: "Tilt disabled - moved to 100%"
 
       # Berechne Delta und entscheide: Direkt oder Referenz-Methode
       - variables:
@@ -85,6 +114,11 @@ script:
             {% endif %}
           use_reference: "{{ (ticks_for_delta | abs) < min_motor_ticks }}"
 
+      # Wenn keine Änderung nötig → direkt beenden
+      - if: "{{ delta_pct == 0 }}"
+        then:
+          - stop: "Tilt already at target"
+
       # Generiere Sequence ID
       - variables:
           seq_id: "{{ now().timestamp() | string }}"
@@ -94,7 +128,7 @@ script:
 
       - choose:
           # Direkt-Methode (Bewegung groß genug)
-          - conditions: "{{ not use_reference and delta_pct != 0 }}"
+          - conditions: "{{ not use_reference }}"
             sequence:
               - action: input_select.select_option
                 target: { entity_id: "{{ state_entity }}" }
@@ -111,6 +145,9 @@ script:
               # Prüfe Sequence ID
               - if: "{{ states(sequence_id_entity) != seq_id }}"
                 then:
+                  - action: input_select.select_option
+                    target: { entity_id: "{{ state_entity }}" }
+                    data: { option: "idle" }
                   - stop: "Sequence interrupted"
 
               - action: input_number.set_value
@@ -118,7 +155,7 @@ script:
                 data: { value: "{{ tilt_target }}" }
 
           # Referenz-Methode (Bewegung zu klein)
-          - conditions: "{{ use_reference and delta_pct != 0 }}"
+          - conditions: "{{ use_reference }}"
             sequence:
               - action: input_select.select_option
                 target: { entity_id: "{{ state_entity }}" }
@@ -136,6 +173,9 @@ script:
               # Prüfe Sequence ID
               - if: "{{ states(sequence_id_entity) != seq_id }}"
                 then:
+                  - action: input_select.select_option
+                    target: { entity_id: "{{ state_entity }}" }
+                    data: { option: "idle" }
                   - stop: "Sequence interrupted at step 1"
 
               - delay: "00:00:0.5"
@@ -156,6 +196,9 @@ script:
               # Prüfe Sequence ID
               - if: "{{ states(sequence_id_entity) != seq_id }}"
                 then:
+                  - action: input_select.select_option
+                    target: { entity_id: "{{ state_entity }}" }
+                    data: { option: "idle" }
                   - stop: "Sequence interrupted at step 2"
 
               - action: input_number.set_value
