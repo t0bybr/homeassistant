@@ -27,70 +27,145 @@
 
 script:
   # -------------------------------------------------------
-  # Tilt-Schritt (Ticks), richtungsabhängig & positionsadaptiv
+  # Tilt anwenden (neues System mit Referenz-Methode)
   # -------------------------------------------------------
-  util_blinds_tilt_step_ticks_dir:
-    alias: "Blinds · Tilt-Schritt (Ticks, richtungsabhängig)"
+  util_blinds_apply_tilt:
+    alias: "Blinds · Tilt anwenden"
     mode: queued
+    max: 10
     fields:
-      position_ticks_sensor_entity_id:
-        description: "Positionssensor (Ticks), z. B. sensor.blinds_*_position_raw"
-      max_travel_ticks_value:
-        description: "Max. Fahrweg in Ticks (100%)"
-      logo_register_target:
-        description: "LOGO-Registernummer für Zielposition (Ticks)"
-      last_moving_state_number_entity_id:
-        description: "input_number mit letzter Bewegungsrichtung (2=closing, 3=opening)"
-      tilt_flag_entity_id:
-        description: "input_boolean.*_tilted"
-
-      # Kalibrierung (Ticks)
-      open_step_ticks_at_closed:
-        description: "Schritt (Ticks) bei Öffnen (hoch), wenn unten/geschlossen"
-      open_step_ticks_at_open:
-        description: "Schritt (Ticks) bei Öffnen (hoch), wenn oben/offen"
-      close_step_ticks_at_closed:
-        description: "Schritt (Ticks) bei Schließen (runter), wenn unten/geschlossen"
-      close_step_ticks_at_open:
-        description: "Schritt (Ticks) bei Schließen (runter), wenn oben/offen"
-      min_step_ticks:
-        description: "Mindestschritt (Ticks), gegen Deadband/Rundung"
+      floor_slug:
+        description: "Stockwerk-Slug (z. B. '0')"
+      room_slug:
+        description: "Raum-Slug (z. B. 'living_room_west')"
 
     sequence:
       - variables:
-          cur: "{{ states(position_ticks_sensor_entity_id) | int(0) }}"
-          maxv: "{{ max_travel_ticks_value | int(1) }}"
-          dir: "{{ states(last_moving_state_number_entity_id) | int(-1) }}" # 2/3
-          r: >
-            {% if maxv|int(1) > 0 %} {{ (cur|float(0)) / (maxv|float(1)) }}
-            {% else %} 0 {% endif %}
+          # Entitäten ableiten
+          state_entity: "input_select.blinds_{{ floor_slug }}_{{ room_slug }}_state"
+          sequence_id_entity: "input_text.blinds_{{ floor_slug }}_{{ room_slug }}_sequence_id"
+          tilt_enabled_entity: "input_boolean.blinds_{{ floor_slug }}_{{ room_slug }}_tilt_enabled"
+          tilt_current_entity: "input_number.blinds_{{ floor_slug }}_{{ room_slug }}_tilt_current"
+          tilt_target_entity: "input_number.blinds_{{ floor_slug }}_{{ room_slug }}_tilt_target"
+          tilt_ticks_close_entity: "input_number.blinds_{{ floor_slug }}_{{ room_slug }}_tilt_ticks_close"
+          tilt_ticks_open_entity: "input_number.blinds_{{ floor_slug }}_{{ room_slug }}_tilt_ticks_open"
+          min_motor_ticks_entity: "input_number.blinds_{{ floor_slug }}_{{ room_slug }}_min_motor_ticks"
+          position_sensor: "sensor.mosquitto_broker_mqtt_logo_hr_104_position_raw"
+          register_target_entity: "input_number.blinds_{{ floor_slug }}_{{ room_slug }}_logo_register_target"
+          status_sensor: "sensor.mosquitto_broker_mqtt_logo_hr_104_status"
 
-          # Interpolation je Position (unten→oben = r: 0→1)
-          raw_step: >
-            {% if dir == 3 %}
-              {{ (open_step_ticks_at_open|float(0)  * r + open_step_ticks_at_closed|float(0)  * (1 - r)) | round(0) }}
-            {% elif dir == 2 %}
-              {{ (close_step_ticks_at_open|float(0) * r + close_step_ticks_at_closed|float(0) * (1 - r)) | round(0) }}
-            {% else %} 0 {% endif %}
-          step: >
-            {% set minstep = (min_step_ticks|default(1))|int(1) %}
-            {{ [raw_step|int(0), minstep] | max }}
+          # Werte lesen
+          tilt_enabled: "{{ is_state(tilt_enabled_entity, 'on') }}"
+          tilt_current: "{{ states(tilt_current_entity) | int(0) }}"
+          tilt_target: "{{ states(tilt_target_entity) | int(75) }}"
+          tilt_ticks_close: "{{ states(tilt_ticks_close_entity) | int(14) }}"
+          tilt_ticks_open: "{{ states(tilt_ticks_open_entity) | int(15) }}"
+          min_motor_ticks: "{{ states(min_motor_ticks_entity) | int(5) }}"
+          current_pos: "{{ states(position_sensor) | int(0) }}"
+          register_target: "{{ states(register_target_entity) | int(535) }}"
 
-          raw_target: >
-            {% if dir == 3 %} {{ cur + step }}        {# hoch → Ticks rauf #}
-            {% elif dir == 2 %} {{ cur - step }}      {# runter → Ticks runter #}
-            {% else %} {{ cur }} {% endif %}
-          target_upper: "{{ [ raw_target|int, maxv|int ] | min }}"
-          target: "{{ [ target_upper|int, 0 ] | max }}"
+      # Prüfen ob Tilt überhaupt aktiv
+      - if: "{{ not tilt_enabled }}"
+        then:
+          - stop: "Tilt not enabled"
+
+      # Berechne Delta und entscheide: Direkt oder Referenz-Methode
+      - variables:
+          delta_pct: "{{ tilt_target - tilt_current }}"
+          # Richtung bestimmen: runter für 0%, hoch für target%
+          ticks_for_delta: >
+            {% if delta_pct > 0 %}
+              {{ (delta_pct / 100.0 * tilt_ticks_open) | round(0) | int }}
+            {% else %}
+              {{ (delta_pct / 100.0 * tilt_ticks_close) | round(0) | int }}
+            {% endif %}
+          use_reference: "{{ (ticks_for_delta | abs) < min_motor_ticks }}"
+
+      # Generiere Sequence ID
+      - variables:
+          seq_id: "{{ now().timestamp() | string }}"
+      - action: input_text.set_value
+        target: { entity_id: "{{ sequence_id_entity }}" }
+        data: { value: "{{ seq_id }}" }
+
       - choose:
-          - conditions: "{{ dir in [2,3] and target != cur }}"
+          # Direkt-Methode (Bewegung groß genug)
+          - conditions: "{{ not use_reference and delta_pct != 0 }}"
             sequence:
+              - action: input_select.select_option
+                target: { entity_id: "{{ state_entity }}" }
+                data: { option: "moving_tilt" }
+
               - action: mqtt.publish
                 data:
-                  topic: "logo/register/set/{{ logo_register_target }}"
-                  payload: "{{ target|int }}"
-                  qos: 1
-                  retain: false
+                  topic: "logo/register/set/{{ register_target }}"
+                  payload: "{{ current_pos + ticks_for_delta }}"
+
+              - wait_template: "{{ states(status_sensor) | int(0) in [0,1] }}"
+                timeout: "00:00:10"
+
+              # Prüfe Sequence ID
+              - if: "{{ states(sequence_id_entity) != seq_id }}"
+                then:
+                  - stop: "Sequence interrupted"
+
+              - action: input_number.set_value
+                target: { entity_id: "{{ tilt_current_entity }}" }
+                data: { value: "{{ tilt_target }}" }
+
+          # Referenz-Methode (Bewegung zu klein)
+          - conditions: "{{ use_reference and delta_pct != 0 }}"
+            sequence:
+              - action: input_select.select_option
+                target: { entity_id: "{{ state_entity }}" }
+                data: { option: "adjusting_tilt_ref" }
+
+              # Schritt 1: Zu 0% Tilt (runter)
+              - action: mqtt.publish
+                data:
+                  topic: "logo/register/set/{{ register_target }}"
+                  payload: "{{ current_pos - tilt_ticks_close }}"
+
+              - wait_template: "{{ states(status_sensor) | int(0) in [0,1] }}"
+                timeout: "00:00:10"
+
+              # Prüfe Sequence ID
+              - if: "{{ states(sequence_id_entity) != seq_id }}"
+                then:
+                  - stop: "Sequence interrupted at step 1"
+
+              - delay: "00:00:0.5"
+
+              # Schritt 2: Zu target% Tilt (hoch)
+              - variables:
+                  ticks_for_target: "{{ (tilt_target / 100.0 * tilt_ticks_open) | round(0) | int }}"
+                  new_pos: "{{ states(position_sensor) | int(0) }}"
+
+              - action: mqtt.publish
+                data:
+                  topic: "logo/register/set/{{ register_target }}"
+                  payload: "{{ new_pos + ticks_for_target }}"
+
+              - wait_template: "{{ states(status_sensor) | int(0) in [0,1] }}"
+                timeout: "00:00:10"
+
+              # Prüfe Sequence ID
+              - if: "{{ states(sequence_id_entity) != seq_id }}"
+                then:
+                  - stop: "Sequence interrupted at step 2"
+
+              - action: input_number.set_value
+                target: { entity_id: "{{ tilt_current_entity }}" }
+                data: { value: "{{ tilt_target }}" }
+
+      # Cleanup
+      - action: input_text.set_value
+        target: { entity_id: "{{ sequence_id_entity }}" }
+        data: { value: "" }
+
+      - action: input_select.select_option
+        target: { entity_id: "{{ state_entity }}" }
+        data: { option: "idle" }
 
   # -------------------------------------------------------
   # Langdruck (Coil halten, bis Button losgelassen / Timeout)
@@ -140,8 +215,10 @@ script:
         description: "input_text für letzte Richtung ('up'/'down')"
       cover_entity_id:
         description: "cover.* (für open/close im Fenster)"
-      tilt_flag_entity_id:
-        description: "input_boolean.*_tilted (wird bei 2× up getoggelt)"
+      floor_slug:
+        description: "Stockwerk-Slug"
+      room_slug:
+        description: "Raum-Slug"
 
     sequence:
       # Fenster starten, falls nicht aktiv
@@ -163,7 +240,8 @@ script:
                 click_counter_entity_id: "{{ click_counter_entity_id }}"
                 last_direction_text_entity_id: "{{ last_direction_text_entity_id }}"
                 cover_entity_id: "{{ cover_entity_id }}"
-                tilt_flag_entity_id: "{{ tilt_flag_entity_id }}"
+                floor_slug: "{{ floor_slug }}"
+                room_slug: "{{ room_slug }}"
 
       # Klick zählen
       - action: counter.increment
@@ -184,8 +262,10 @@ script:
         description: "input_text ('up'/'down')"
       cover_entity_id:
         description: "cover.*"
-      tilt_flag_entity_id:
-        description: "input_boolean.*_tilted (2× up toggelt den Tilt-Flag)"
+      floor_slug:
+        description: "Stockwerk-Slug"
+      room_slug:
+        description: "Raum-Slug"
 
       # Optionale Overrides (Script-Entity-IDs) – leer lassen, wenn ungenutzt
       on_up_3:
@@ -204,6 +284,8 @@ script:
       - variables:
           clicks: "{{ states(click_counter_entity_id) | int(0) }}"
           dir: "{{ states(last_direction_text_entity_id) }}"
+          tilt_enabled_entity: "input_boolean.blinds_{{ floor_slug }}_{{ room_slug }}_tilt_enabled"
+          state_entity: "input_select.blinds_{{ floor_slug }}_{{ room_slug }}_state"
 
       - choose:
           # ==== Hoch-Taste ====
@@ -216,11 +298,19 @@ script:
                       - action: cover.open_cover
                         target: { entity_id: "{{ cover_entity_id }}" }
 
-                  # 2× up → Tilt-Flag toggeln (eigentliche Tilt-Fahrt macht der Blueprint)
+                  # 2× up → Tilt toggeln + sofort anwenden wenn idle
                   - conditions: "{{ clicks == 2 }}"
                     sequence:
                       - action: input_boolean.toggle
-                        target: { entity_id: "{{ tilt_flag_entity_id }}" }
+                        target: { entity_id: "{{ tilt_enabled_entity }}" }
+
+                      # Sofort anwenden wenn idle (sonst wartet bis Fahrtende)
+                      - if: "{{ states(state_entity) == 'idle' }}"
+                        then:
+                          - action: script.util_blinds_apply_tilt
+                            data:
+                              floor_slug: "{{ floor_slug }}"
+                              room_slug: "{{ room_slug }}"
 
                   # 3× up → optionales Script
                   - conditions: "{{ clicks == 3 and (on_up_3 | default('') | string) != '' }}"

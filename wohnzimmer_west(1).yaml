@@ -21,7 +21,24 @@
 
 input_boolean:
   blinds_0_living_room_west_counting:
-  blinds_0_living_room_west_tilted:
+  blinds_0_living_room_west_tilt_enabled:
+
+input_select:
+  blinds_0_living_room_west_state:
+    options:
+      - idle
+      - moving_user
+      - moving_automation
+      - moving_wind
+      - moving_tilt
+      - adjusting_tilt_ref
+      - recovering_position
+    initial: idle
+
+input_text:
+  blinds_0_living_room_west_sequence_id:
+    initial: ""
+  blinds_0_living_room_west_last_direction_text:
 
 input_number:
   blinds_0_living_room_west_max_travel_ticks:
@@ -67,19 +84,51 @@ input_number:
     mode: box
     step: 1
 
-  # UI-Slider für Tilt (nur Parameter; kein direktes Fahren)
-  blinds_0_living_room_west_tilt_ui:
+  # Tilt-System
+  blinds_0_living_room_west_tilt_current:
+    name: "Jalousie West - Aktuelle Neigung"
     min: 0
     max: 100
-    mode: box
     step: 1
+    mode: slider
+    unit_of_measurement: "%"
+
+  blinds_0_living_room_west_tilt_target:
+    name: "Jalousie West - Ziel-Neigung"
+    min: 0
+    max: 100
+    step: 5
+    mode: slider
+    unit_of_measurement: "%"
+    initial: 75
+
+  blinds_0_living_room_west_tilt_ticks_close:
+    name: "Jalousie West - Ticks für 0% Tilt (runter)"
+    min: 0
+    max: 50
+    step: 1
+    mode: box
+    initial: 14
+
+  blinds_0_living_room_west_tilt_ticks_open:
+    name: "Jalousie West - Ticks für 100% Tilt (hoch)"
+    min: 0
+    max: 50
+    step: 1
+    mode: box
+    initial: 15
+
+  blinds_0_living_room_west_min_motor_ticks:
+    name: "Jalousie West - Minimale Motorlaufzeit (Ticks)"
+    min: 1
+    max: 10
+    step: 1
+    mode: box
+    initial: 5
 
 counter:
   blinds_0_living_room_west_clicks:
     initial: 0
-
-input_text:
-  blinds_0_living_room_west_last_direction_text:
 
 automation:
   - use_blueprint:
@@ -89,7 +138,6 @@ automation:
         floor: "0"
 
         cover_entity: cover.blinds_0_living_room_west
-        tilt_flag_entity: input_boolean.blinds_0_living_room_west_tilted
 
         up_button_entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_9
         down_button_entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_8
@@ -104,12 +152,9 @@ automation:
         register_counter: 20
         max_travel_ticks: 552
 
-        # Kalibrierung (Ticks)
-        open_step_ticks_at_closed: 12
-        open_step_ticks_at_open: 9
-        close_step_ticks_at_closed: 10
-        close_step_ticks_at_open: 6
-        min_step_ticks: 2
+        # Tilt-Konfiguration
+        tilt_target_default: 75
+        tilt_position_threshold_pct: 80
 
 cover:
   - platform: template
@@ -183,16 +228,8 @@ cover:
                 payload: "{{ target_ticks | int }}"
             # Hinweis: '10000'-Bestätigung erfolgt im Blueprint bei 2/3→0/1
 
-        # --- Tilt-Slider: nur UI/Parameter; keine direkte Fahrt ---
-        tilt_template: "{{ states('input_number.blinds_0_living_room_west_tilt_ui') | int(0) }}"
-        set_cover_tilt_position:
-          sequence:
-            - action: input_number.set_value
-              target:
-                entity_id: input_number.blinds_0_living_room_west_tilt_ui
-              data:
-                value: "{{ tilt | int }}"
-            # Kein Fahren hier – der Blueprint reagiert auf das Cover-Attribut
+        # --- Tilt-Anzeige: zeigt aktuelle Neigung ---
+        tilt_template: "{{ states('input_number.blinds_0_living_room_west_tilt_current') | int(0) }}"
 
 script:
   testimctestface:
