@@ -389,34 +389,30 @@ action:
                 data: { option: "idle" }
               - stop: "Stopped because cover was moving"
 
-          # Nur weitermachen wenn idle
-          - if:
-              - condition: template
-                value_template: "{{ state_current != 'idle' }}"
-            then:
-              - stop: "Not in idle state, ignoring button press"
-
-          # State auf moving_user setzen
-          - action: input_select.select_option
-            target: { entity_id: "{{ var_state_entity_id }}" }
-            data: { option: "moving_user" }
-
           # Kurz/Langdruck (0.6s)
           - wait_template: "{{ is_state( (var_up_button_entity_id if is_up_press else var_down_button_entity_id), 'off') }}"
             timeout: "00:00:0.6"
             continue_on_timeout: true
 
           - choose:
-              # Langdruck
+              # Langdruck → State setzen, dann Langdruck-Script
               - conditions: "{{ not wait.completed }}"
                 sequence:
+                  # Nur bei Langdruck State setzen
+                  - if: "{{ state_current == 'idle' }}"
+                    then:
+                      - action: input_select.select_option
+                        target: { entity_id: "{{ var_state_entity_id }}" }
+                        data: { option: "moving_user" }
+
                   - action: script.util_blinds_longpress
                     data:
                       is_up: "{{ is_up_press }}"
                       coil_up_value: "{{ var_coil_up_value }}"
                       coil_down_value: "{{ var_coil_down_value }}"
                       pressed_button_entity_id: "{{ var_up_button_entity_id if is_up_press else var_down_button_entity_id }}"
-              # Kurz-/Mehrfachklick
+
+              # Kurz-/Mehrfachklick → KEIN State setzen, nur Counter
               - conditions: "{{ wait.completed }}"
                 sequence:
                   - action: script.util_blinds_counter_click
@@ -428,3 +424,4 @@ action:
                       cover_entity_id: "{{ var_cover_entity_id }}"
                       floor_slug: "{{ var_floor_slug }}"
                       room_slug: "{{ var_room_slug }}"
+                      state_entity_id: "{{ var_state_entity_id }}"

@@ -223,6 +223,8 @@ script:
         description: "Stockwerk-Slug"
       room_slug:
         description: "Raum-Slug"
+      state_entity_id:
+        description: "input_select State Machine Entity"
 
     sequence:
       - variables:
@@ -251,6 +253,7 @@ script:
                 cover_entity_id: "{{ cover_entity_id }}"
                 floor_slug: "{{ floor_slug_str }}"
                 room_slug: "{{ room_slug_str }}"
+                state_entity_id: "{{ state_entity_id }}"
 
       # Klick zählen
       - action: counter.increment
@@ -275,6 +278,8 @@ script:
         description: "Stockwerk-Slug"
       room_slug:
         description: "Raum-Slug"
+      state_entity_id:
+        description: "input_select State Machine Entity"
 
       # Optionale Overrides (Script-Entity-IDs) – leer lassen, wenn ungenutzt
       on_up_3:
@@ -298,16 +303,18 @@ script:
           clicks: "{{ states(click_counter_entity_id) | int(0) }}"
           dir: "{{ states(last_direction_text_entity_id) }}"
           tilt_enabled_entity: "input_boolean.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_tilt_enabled"
-          state_entity: "input_select.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_state"
 
       - choose:
           # ==== Hoch-Taste ====
           - conditions: "{{ dir == 'up' }}"
             sequence:
               - choose:
-                  # 1× up → öffnen
+                  # 1× up → öffnen + State setzen
                   - conditions: "{{ clicks == 1 }}"
                     sequence:
+                      - action: input_select.select_option
+                        target: { entity_id: "{{ state_entity_id }}" }
+                        data: { option: "moving_user" }
                       - action: cover.open_cover
                         target: { entity_id: "{{ cover_entity_id }}" }
 
@@ -318,7 +325,7 @@ script:
                         target: { entity_id: "{{ tilt_enabled_entity }}" }
 
                       # Sofort anwenden wenn idle (sonst wartet bis Fahrtende)
-                      - if: "{{ states(state_entity) == 'idle' }}"
+                      - if: "{{ states(state_entity_id) == 'idle' }}"
                         then:
                           - action: script.util_blinds_apply_tilt
                             data:
@@ -341,9 +348,12 @@ script:
           - conditions: "{{ dir == 'down' }}"
             sequence:
               - choose:
-                  # 1× down → schließen
+                  # 1× down → schließen + State setzen
                   - conditions: "{{ clicks == 1 }}"
                     sequence:
+                      - action: input_select.select_option
+                        target: { entity_id: "{{ state_entity_id }}" }
+                        data: { option: "moving_user" }
                       - action: cover.close_cover
                         target: { entity_id: "{{ cover_entity_id }}" }
 
