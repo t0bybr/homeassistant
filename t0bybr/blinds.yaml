@@ -243,18 +243,19 @@ action:
             data:
               value: "{{ states(var_position_ticks_sensor_entity_id) | int }}"
 
-      # Fahrt startet: 0/1 → 2/3 → Tilt-Current aktualisieren
+      # Fahrt startet: 0/1 → 2/3 → Tilt-Current aktualisieren (nur wenn nicht Tilt-Operation)
       - conditions: >
           {{
             trigger.entity_id == var_status_sensor_entity_id
             and (trigger.from_state is not none)
             and (trigger.from_state.state | int(0)) in [0,1]
             and (trigger.to_state.state   | int(0)) in [2,3]
+            and states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref']
           }}
         sequence:
           - variables:
               new_status: "{{ trigger.to_state.state | int(0) }}"
-          # Update tilt_current basierend auf Fahrtrichtung
+          # Update tilt_current basierend auf Fahrtrichtung (nur bei User/Automation-Fahrten)
           - action: input_number.set_value
             target: { entity_id: "{{ var_tilt_current_entity_id }}" }
             data:
