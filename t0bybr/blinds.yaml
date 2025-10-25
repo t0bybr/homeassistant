@@ -1,0 +1,470 @@
+# =========================================================
+# README · Jalousie – LOGO/MQTT Tastersteuerung (Stop/Counter/Tilt)
+# ---------------------------------------------------------
+# Funktionen
+# - Taster Hoch/Runter: Kurz-/Langdruck, Sofort-Stop
+# - Tilt-Steuerung in Ticks: adaptiver, richtungsabhängiger Schritt je Klick/Slider
+# - Fahrende-Erkennung über Statussensor (2/3 → 0/1) mit LOGO-Bestätigung (10000)
+# - HA-Start: Max-Fahrweg/-dauer (Ticks-Limit) in LOGO schreiben
+#
+# Wichtige Signale
+# - position_ticks_sensor: aktueller Weg (Ticks 0..max_travel_ticks)
+# - movement_status_sensor: 0=closed, 1=idle/open, 2=closing, 3=opening
+# - var_tilt_flag_entity_id: input_boolean.*_tilted (manuelles Toggle)
+# - Cover-Tilt: current_tilt_position (Slider im UI) → ruft unser Tilt-Utility
+#
+# Kalibrierung (pro Jalousie im use_blueprint angeben)
+# - open_step_ticks_at_closed / _at_open
+# - close_step_ticks_at_closed / _at_open
+# - min_step_ticks
+# → Siehe Kalibrier-Anleitung unten im Kommentarblock.
+#
+# Fahrprinzip
+# - Tilt-Änderung (Flag/Slider) triggert util_blinds_tilt_step_ticks_dir.
+# - Fahrtende (2/3→0/1) bestätigt LOGO mit 10000, merkt letzte Richtung
+#   und fährt optional (bei Tilt=on) einen zusätzlichen adaptiven Schritt.
+# =========================================================
+# KALIBRIER-ANLEITUNG (Ticks)
+# 1) max_travel_ticks messen (100% Weg).
+# 2) open_step_ticks_at_closed: unten (≈0 Ticks) klein „hoch“, bis Kipp erkennbar → ΔTicks.
+# 3) open_step_ticks_at_open:   oben (≈max) klein „hoch“ → ΔTicks.
+# 4) close_step_ticks_at_closed: unten klein „runter“ → ΔTicks.
+# 5) close_step_ticks_at_open:   oben klein „runter“ → ΔTicks.
+# 6) min_step_ticks = Mindestschritt (typ. 1–3).
+# Script interpoliert zwischen *_at_closed (r=0) und *_at_open (r=1).
+# Richtung kommt aus var_last_moving_state_number_entity_id (2/3).
+# =========================================================
+
+blueprint:
+  name: Jalousie – LOGO/MQTT Tastersteuerung (Stop/Counter/Tilt)
+  description: >
+    Tastersteuerung mit Kurz/Langdruck, adaptiver Tilt-Schrittlogik in Ticks
+    und sicherer LOGO-Bestätigung am Fahrtende. Tilt kann per Flag oder Cover-Slider ausgelöst werden.
+  domain: automation
+  input:
+    # Identifikation
+    name:
+      name: "Raum-Slug (z. B. wohnzimmer_west)"
+      selector: { text: { multiline: false } }
+    floor:
+      name: "Stockwerk-Slug (z. B. 0)"
+      selector: { text: { multiline: false } }
+
+    # Taster
+    up_button_entity_id:
+      name: "Taster Hoch (binary_sensor)"
+      selector: { entity: { filter: [{ domain: binary_sensor }] } }
+    down_button_entity_id:
+      name: "Taster Runter (binary_sensor)"
+      selector: { entity: { filter: [{ domain: binary_sensor }] } }
+
+    # Cover
+    cover_entity:
+      name: "Cover-Entität (Template-Cover mit Tilt-Slider)"
+      selector: { entity: { filter: [{ domain: cover }] } }
+
+    tilt_flag_entity:
+      name: "Tilt-Flag (input_boolean)"
+      selector: { entity: { filter: [{ domain: input_boolean }] } }
+
+    # Kalibrier-Ticks (pro Jalousie)
+    open_step_ticks_at_closed:
+      name: "Tilt-Schritt (hoch) unten [Ticks]"
+      selector: { number: { min: 0, max: 300, step: 1, mode: box } }
+    open_step_ticks_at_open:
+      name: "Tilt-Schritt (hoch) oben [Ticks]"
+      selector: { number: { min: 0, max: 300, step: 1, mode: box } }
+    close_step_ticks_at_closed:
+      name: "Tilt-Schritt (runter) unten [Ticks]"
+      selector: { number: { min: 0, max: 300, step: 1, mode: box } }
+    close_step_ticks_at_open:
+      name: "Tilt-Schritt (runter) oben [Ticks]"
+      selector: { number: { min: 0, max: 300, step: 1, mode: box } }
+    min_step_ticks:
+      name: "Mindest-Tilt-Schritt [Ticks]"
+      selector: { number: { min: 1, max: 20, step: 1, mode: box } }
+
+    # LOGO/MQTT Parameter
+    coil_up:
+      name: "LOGO Coil: hoch"
+      selector: { number: { min: 1, max: 9999, mode: box } }
+    coil_down:
+      name: "LOGO Coil: runter"
+      selector: { number: { min: 1, max: 9999, mode: box } }
+    register_target:
+      name: "LOGO Register: Zielposition (Ticks)"
+      selector: { number: { min: 1, max: 9999, mode: box } }
+    register_max_ticks_limit:
+      name: "LOGO Register: max. Fahrweg/-dauer (Ticks-Limit)"
+      selector: { number: { min: 1, max: 9999, mode: box } }
+
+    # Skalierung & Sensoren
+    max_travel_ticks:
+      name: "Max. Fahrweg in Ticks (100%)"
+      selector: { number: { min: 1, max: 5000, mode: box } }
+    position_ticks_sensor_entity_id:
+      name: "Positionssensor in Ticks (0..max_travel_ticks)"
+      selector: { entity: { filter: [{ domain: sensor }] } }
+    movement_status_sensor_entity_id:
+      name: "Statussensor (0=closed,1=idle/open,2=closing,3=opening)"
+      selector: { entity: { filter: [{ domain: sensor }] } }
+
+mode: parallel
+max: 10
+
+# -----------------------------
+# TRIGGER
+# -----------------------------
+trigger:
+  # Taster
+  - trigger: state
+    entity_id: !input up_button_entity_id
+    from: "off"
+    to: "on"
+  - trigger: state
+    entity_id: !input down_button_entity_id
+    from: "off"
+    to: "on"
+
+  # HA-Start → Limit setzen
+  - trigger: homeassistant
+    event: start
+
+  # Automations-Reload → Limit erneut setzen
+  - trigger: event
+    event_type: automation_reloaded
+
+  # Positionsänderung (Ticks) – für Tilt-Reset > Schwelle
+  - trigger: state
+    entity_id: !input position_ticks_sensor_entity_id
+
+  # Statuswechsel (Fahrt beginnt/endet)
+  - trigger: state
+    entity_id: !input movement_status_sensor_entity_id
+
+  # Wind-Sensor
+  - trigger: state
+    entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_20
+
+  # Tilt-Flag (input_boolean) ändert sich
+  - trigger: state
+    entity_id: !input tilt_flag_entity
+
+  # Cover-Tilt-Slider (Attributänderung)
+  - trigger: state
+    entity_id: !input cover_entity
+    attribute: current_tilt_position
+
+# -----------------------------
+# VARIABLEN (sprechende Namen)
+# -----------------------------
+variables:
+  # Slugs
+  var_floor_slug: !input floor
+  var_room_slug: !input name
+
+  # Entitäten, die als Inputs kommen
+  var_cover_entity_id: !input cover_entity
+  var_tilt_flag_entity_id: !input tilt_flag_entity
+
+  # Abgeleitete Entitäten (müssen zu deinen Helpers passen!)
+  var_counting_flag_entity_id: "input_boolean.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_counting"
+  var_click_counter_entity_id: "counter.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_clicks"
+  var_last_direction_text_entity_id: "input_text.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_last_direction_text"
+
+  # Letzter Bewegungsstatus (input_number, 2=closing, 3=opening)
+  var_last_moving_state_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_last_moving_state"
+  var_position_backup_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_position_backup"
+
+  # Tilt-Autostep Pending-Flag
+  var_tilt_pending_flag_entity_id: "input_boolean.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_pending"
+  var_tilt_autostep_guard_entity_id: "input_boolean.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_autostep_guard"
+
+  # UI-/Helper (sichtbar in HA) – **an deine Namen angepasst**
+  var_target_register_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_logo_register_target"
+  var_max_travel_ticks_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_max_travel_ticks"
+  var_coil_up_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_logo_coil_up"
+  var_coil_down_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_logo_coil_down"
+
+  # Inputs aus Blueprint
+  var_status_sensor_entity_id: !input movement_status_sensor_entity_id
+  var_up_button_entity_id: !input up_button_entity_id
+  var_down_button_entity_id: !input down_button_entity_id
+  var_logo_register_target: !input register_target
+  var_logo_register_max_limit: !input register_max_ticks_limit
+  var_logo_register_counter: !input register_counter
+  var_max_travel_ticks_value: !input max_travel_ticks
+  var_position_ticks_sensor_entity_id: !input position_ticks_sensor_entity_id
+  var_coil_up_value: !input coil_up
+  var_coil_down_value: !input coil_down
+
+  # Kalibrierung (aus Inputs)
+  var_open_step_ticks_at_closed: !input open_step_ticks_at_closed
+  var_open_step_ticks_at_open: !input open_step_ticks_at_open
+  var_close_step_ticks_at_closed: !input close_step_ticks_at_closed
+  var_close_step_ticks_at_open: !input close_step_ticks_at_open
+  var_min_step_ticks: !input min_step_ticks
+
+  # Tilt-Reset-Schwelle in %
+  var_tilt_reset_threshold_pct: 90
+
+# -----------------------------
+# ACTIONS
+# -----------------------------
+action:
+  - choose:
+      # (A) Tilt via Flag (on/off) → adaptiver Schritt, wenn nicht in Fahrt
+      - conditions: >
+          {{
+            trigger.entity_id == var_tilt_flag_entity_id
+            and ( states(var_last_moving_state_number_entity_id)|int(-1) in [2,3] )
+          }}
+        sequence:
+          - delay: "00:00:0.3"
+          - if: "{{ states(var_status_sensor_entity_id)|int(0) in [0,1] }}"
+            then:
+              - action: script.util_blinds_tilt_step_ticks_dir
+                data:
+                  position_ticks_sensor_entity_id: "{{ var_position_ticks_sensor_entity_id }}"
+                  max_travel_ticks_value: "{{ var_max_travel_ticks_value }}"
+                  logo_register_target: "{{ var_logo_register_target }}"
+                  last_moving_state_number_entity_id: "{{ var_last_moving_state_number_entity_id }}"
+                  open_step_ticks_at_closed: "{{ var_open_step_ticks_at_closed }}"
+                  open_step_ticks_at_open: "{{ var_open_step_ticks_at_open }}"
+                  close_step_ticks_at_closed: "{{ var_close_step_ticks_at_closed }}"
+                  close_step_ticks_at_open: "{{ var_close_step_ticks_at_open }}"
+                  min_step_ticks: "{{ var_min_step_ticks }}"
+          - stop: "Tilt flag change handled"
+
+      # (A2) Tilt via Cover-Slider → gleicher Utility-Call
+      - conditions: >
+          {{
+            trigger.entity_id == var_cover_entity_id
+            and (trigger.to_state is not none)
+            and (trigger.to_state.attributes.current_tilt_position is defined)
+            and ( states(var_last_moving_state_number_entity_id)|int(-1) in [2,3] )
+          }}
+        sequence:
+          - delay: "00:00:0.4"
+          - if: "{{ states(var_status_sensor_entity_id)|int(0) in [0,1] }}"
+            then:
+              - action: script.util_blinds_tilt_step_ticks_dir
+                data:
+                  position_ticks_sensor_entity_id: "{{ var_position_ticks_sensor_entity_id }}"
+                  max_travel_ticks_value: "{{ var_max_travel_ticks_value }}"
+                  logo_register_target: "{{ var_logo_register_target }}"
+                  last_moving_state_number_entity_id: "{{ var_last_moving_state_number_entity_id }}"
+                  open_step_ticks_at_closed: "{{ var_open_step_ticks_at_closed }}"
+                  open_step_ticks_at_open: "{{ var_open_step_ticks_at_open }}"
+                  close_step_ticks_at_closed: "{{ var_close_step_ticks_at_closed }}"
+                  close_step_ticks_at_open: "{{ var_close_step_ticks_at_open }}"
+                  min_step_ticks: "{{ var_min_step_ticks }}"
+          - stop: "Tilt slider change handled"
+
+      # Wind-Ende Sync
+      - conditions: >
+          {{
+            trigger.entity_id == 'binary_sensor.mosquitto_broker_mqtt_logo_coil_20'
+            and trigger.from_state.state == 'on'
+            and trigger.to_state.state == 'off'
+          }}
+        sequence:
+          - action: mqtt.publish
+            data:
+              topic: "logo/register32/set/{{ var_logo_register_counter }}"
+              payload: "{{ states(var_max_travel_ticks_value) | int }}"
+
+      # Wenn die Logo neu startet und die Positionswerte nicht mehr passen
+      - conditions: >
+          {{
+            trigger.entity_id == var_position_ticks_sensor_entity_id
+            and (trigger.to_state.state is not none)
+            and (trigger.to_state.state | int in [0])
+            and (states(var_position_backup_number_entity_id) | int(-1) not in [0])
+          }}
+        sequence:
+          - action: mqtt.publish
+            data:
+              topic: "logo/register32/set/{{ var_logo_register_counter }}"
+              payload: "{{ states(var_position_backup_number_entity_id) | int }}"
+
+      # Positionswert in Backup schreiben
+      - conditions: >
+          {{
+            trigger.entity_id == var_position_ticks_sensor_entity_id
+            and (trigger.to_state.state is not none)
+          }}
+        sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: "{{ var_position_backup_number_entity_id }}"
+            data:
+              value: "{{ states(var_position_ticks_sensor_entity_id) | int }}"
+
+      # (B) Fahrt startet: 0/1 → 2/3 → Tilt-Autostep vormerken
+      - conditions: >
+          {{
+            trigger.entity_id == var_status_sensor_entity_id
+            and (trigger.from_state is not none)
+            and (trigger.from_state.state | int(0)) in [0,1]
+            and (trigger.to_state.state   | int(0)) in [2,3]
+            and is_state(var_tilt_autostep_guard_entity_id, 'off')
+          }}
+        sequence:
+          - action: input_boolean.turn_on
+            target: { entity_id: "{{ var_tilt_pending_flag_entity_id }}" }
+          - stop: "Marked tilt autostep pending"
+
+      # (C) Fahrt endet: 2/3 → 0/1 → bestätigen + Richtung speichern + optional Tilt-Step
+      - conditions: >
+          {{
+            trigger.entity_id == var_status_sensor_entity_id
+            and (trigger.from_state is not none)
+            and (trigger.from_state.state | int(0)) in [2,3]
+            and (trigger.to_state.state   | int(0)) in [0,1]
+          }}
+        sequence:
+          - delay: "00:00:0.3"
+          - choose:
+              - conditions: "{{ states(var_status_sensor_entity_id) | int(0) in [0,1] }}"
+                sequence:
+                  # Bestätigung an LOGO
+                  - action: mqtt.publish
+                    data:
+                      topic: "logo/register/set/{{ var_logo_register_target }}"
+                      payload: "10000"
+
+                  # letzte Richtung merken
+                  - variables:
+                      dir_before: "{{ trigger.from_state.state | int(0) }}"
+                      is_tilt_on: "{{ is_state(var_tilt_flag_entity_id,'on') }}"
+                      is_tilt_pending: "{{ is_state(var_tilt_pending_flag_entity_id,'on') }}"
+                  - action: input_number.set_value
+                    target:
+                      {
+                        entity_id: "{{ var_last_moving_state_number_entity_id }}",
+                      }
+                    data: { value: "{{ dir_before }}" }
+
+                  # optional: bei Tilt=on noch 1 adaptiver Schritt (nur 1× pro Fahrtende)
+                  - if: "{{ is_tilt_pending and is_tilt_on and dir_before in [2,3] }}"
+                    then:
+                      - action: input_boolean.turn_on
+                        target:
+                          {
+                            entity_id: "{{ var_tilt_autostep_guard_entity_id }}",
+                          }
+                      - action: script.util_blinds_tilt_step_ticks_dir
+                        data:
+                          position_ticks_sensor_entity_id: "{{ var_position_ticks_sensor_entity_id }}"
+                          max_travel_ticks_value: "{{ var_max_travel_ticks_value }}"
+                          logo_register_target: "{{ var_logo_register_target }}"
+                          last_moving_state_number_entity_id: "{{ var_last_moving_state_number_entity_id }}"
+                          open_step_ticks_at_closed: "{{ var_open_step_ticks_at_closed }}"
+                          open_step_ticks_at_open: "{{ var_open_step_ticks_at_open }}"
+                          close_step_ticks_at_closed: "{{ var_close_step_ticks_at_closed }}"
+                          close_step_ticks_at_open: "{{ var_close_step_ticks_at_open }}"
+                          min_step_ticks: "{{ var_min_step_ticks }}"
+                      - delay: "00:00:02"
+                      - action: input_boolean.turn_off
+                        target:
+                          {
+                            entity_id: "{{ var_tilt_autostep_guard_entity_id }}",
+                          }
+                  - action: input_boolean.turn_off
+                    target:
+                      { entity_id: "{{ var_tilt_pending_flag_entity_id }}" }
+          - stop: "Handled stop + optional tilt step"
+
+      # (D) Position überschreitet 90% → Tilt-Flag aus (Hysterese ≤th → >th)
+      - conditions: "{{ trigger.entity_id == var_position_ticks_sensor_entity_id }}"
+        sequence:
+          - variables:
+              to_ticks: "{{ trigger.to_state.state | int(0) }}"
+              fr_ticks: "{{ (trigger.from_state.state if trigger.from_state else 0) | int(0) }}"
+              max_ticks: "{{ var_max_travel_ticks_value | int(1) }}"
+              to_pct: "{{ (100.0 * to_ticks / max_ticks) | round(0) | int }}"
+              fr_pct: "{{ (100.0 * fr_ticks / max_ticks) | round(0) | int }}"
+              th: "{{ var_tilt_reset_threshold_pct | int(90) }}"
+          - choose:
+              - conditions: "{{ fr_pct <= th and to_pct > th }}"
+                sequence:
+                  - action: input_boolean.turn_off
+                    target: { entity_id: "{{ var_tilt_flag_entity_id }}" }
+          - stop: "Handled pos→tilt reset"
+
+      # (E) HA-Start/Reload → LOGO-Limit & UI-Helper syncen
+      - conditions: >
+          {{
+            trigger.platform == 'homeassistant'
+            or (
+              trigger.platform == 'event'
+              and trigger.event.event_type == 'automation_reloaded'
+            )
+          }}
+        sequence:
+          - action: mqtt.publish
+            data:
+              topic: "logo/register/set/{{ var_logo_register_max_limit }}"
+              payload: "{{ var_max_travel_ticks_value }}"
+          - action: input_number.set_value
+            target: { entity_id: "{{ var_max_travel_ticks_number_entity_id }}" }
+            data: { value: "{{ var_max_travel_ticks_value }}" }
+          - action: input_number.set_value
+            target: { entity_id: "{{ var_target_register_number_entity_id }}" }
+            data: { value: "{{ var_logo_register_target }}" }
+          - action: input_number.set_value
+            target: { entity_id: "{{ var_coil_up_number_entity_id }}" }
+            data: { value: "{{ var_coil_up_value }}" }
+          - action: input_number.set_value
+            target: { entity_id: "{{ var_coil_down_number_entity_id }}" }
+            data: { value: "{{ var_coil_down_value }}" }
+          - action: input_boolean.turn_off
+            target: { entity_id: "{{ var_tilt_pending_flag_entity_id }}" }
+          - action: input_boolean.turn_off
+            target: { entity_id: "{{ var_tilt_autostep_guard_entity_id }}" }
+
+      # (F) Taster gedrückt → Sofort-Stop, dann Kurz-/Langdruck
+      - conditions: >
+          {{
+            trigger.platform == 'state'
+            and trigger.entity_id in [var_up_button_entity_id, var_down_button_entity_id]
+          }}
+        sequence:
+          - variables:
+              is_up_press: "{{ trigger.entity_id == var_up_button_entity_id }}"
+              status_now: "{{ states(var_status_sensor_entity_id) | int(0) }}"
+          - if:
+              - condition: template
+                value_template: "{{ status_now in [2,3] or states(var_cover_entity_id) in ['opening','closing'] }}"
+            then:
+              - action: cover.stop_cover
+                target: { entity_id: "{{ var_cover_entity_id }}" }
+              - stop: "Stopped because cover was moving"
+
+          # Kurz/Langdruck (0.6s)
+          - wait_template: "{{ is_state( (var_up_button_entity_id if is_up_press else var_down_button_entity_id), 'off') }}"
+            timeout: "00:00:0.6"
+            continue_on_timeout: true
+
+          - choose:
+              # Langdruck
+              - conditions: "{{ not wait.completed }}"
+                sequence:
+                  - action: script.util_blinds_longpress
+                    data:
+                      is_up: "{{ is_up_press }}"
+                      coil_up_value: "{{ var_coil_up_value }}"
+                      coil_down_value: "{{ var_coil_down_value }}"
+                      pressed_button_entity_id: "{{ var_up_button_entity_id if is_up_press else var_down_button_entity_id }}"
+              # Kurz-/Mehrfachklick
+              - conditions: "{{ wait.completed }}"
+                sequence:
+                  - action: script.util_blinds_counter_click
+                    data:
+                      is_up: "{{ is_up_press }}"
+                      counting_flag_entity_id: "{{ var_counting_flag_entity_id }}"
+                      click_counter_entity_id: "{{ var_click_counter_entity_id }}"
+                      last_direction_text_entity_id: "{{ var_last_direction_text_entity_id }}"
+                      cover_entity_id: "{{ var_cover_entity_id }}"
+                      tilt_flag_entity_id: "{{ var_tilt_flag_entity_id }}"

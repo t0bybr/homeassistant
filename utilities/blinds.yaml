@@ -1,0 +1,265 @@
+# =========================================================
+# README · Blinds/LOGO Utility-Skripte (konsistente Benennung)
+# ---------------------------------------------------------
+# Enthaltene Skripte
+# - util_blinds_tilt_step_ticks_dir
+#     Adaptiver Tilt-Schritt in Ticks, abhängig von:
+#       • letzter Bewegungsrichtung (2=closing/runter, 3=opening/hoch)
+#       • aktueller Position (Interpolation zwischen „unten“- und „oben“-Schritt)
+#       • je Richtung separat kalibrierbaren Schrittgrößen (Ticks)
+#
+# - util_blinds_longpress
+#     Hält die passende LOGO-Coil (hoch/runter), bis der Button losgelassen wird
+#     oder ein Safety-Timeout greift.
+#
+# - util_blinds_counter_click + util_blinds_counter_window
+#     Klickzähler (Fenster 2s): 1× open/close, 2× Tilt-Flag toggle, 3/4× optional.
+#
+# Namenskonvention
+# - *_entity_id  … erwartet eine Entity-ID (z. B. cover.*, input_boolean.*, counter.*)
+# - *_value      … reine Werte (Zahlen)
+# - *_number_entity_id … input_number-Entität
+#
+# MQTT (erwartete Topics)
+# - logo/register/set/<number>  (payload: Ticks-Ziel oder „10000“)
+# - logo/coil/set/<number>      (payload: "ON"/"OFF")
+# =========================================================
+
+script:
+  # -------------------------------------------------------
+  # Tilt-Schritt (Ticks), richtungsabhängig & positionsadaptiv
+  # -------------------------------------------------------
+  util_blinds_tilt_step_ticks_dir:
+    alias: "Blinds · Tilt-Schritt (Ticks, richtungsabhängig)"
+    mode: queued
+    fields:
+      position_ticks_sensor_entity_id:
+        description: "Positionssensor (Ticks), z. B. sensor.blinds_*_position_raw"
+      max_travel_ticks_value:
+        description: "Max. Fahrweg in Ticks (100%)"
+      logo_register_target:
+        description: "LOGO-Registernummer für Zielposition (Ticks)"
+      last_moving_state_number_entity_id:
+        description: "input_number mit letzter Bewegungsrichtung (2=closing, 3=opening)"
+      tilt_flag_entity_id:
+        description: "input_boolean.*_tilted"
+
+      # Kalibrierung (Ticks)
+      open_step_ticks_at_closed:
+        description: "Schritt (Ticks) bei Öffnen (hoch), wenn unten/geschlossen"
+      open_step_ticks_at_open:
+        description: "Schritt (Ticks) bei Öffnen (hoch), wenn oben/offen"
+      close_step_ticks_at_closed:
+        description: "Schritt (Ticks) bei Schließen (runter), wenn unten/geschlossen"
+      close_step_ticks_at_open:
+        description: "Schritt (Ticks) bei Schließen (runter), wenn oben/offen"
+      min_step_ticks:
+        description: "Mindestschritt (Ticks), gegen Deadband/Rundung"
+
+    sequence:
+      - variables:
+          cur: "{{ states(position_ticks_sensor_entity_id) | int(0) }}"
+          maxv: "{{ max_travel_ticks_value | int(1) }}"
+          dir: "{{ states(last_moving_state_number_entity_id) | int(-1) }}" # 2/3
+          r: >
+            {% if maxv|int(1) > 0 %} {{ (cur|float(0)) / (maxv|float(1)) }}
+            {% else %} 0 {% endif %}
+
+          # Interpolation je Position (unten→oben = r: 0→1)
+          raw_step: >
+            {% if dir == 3 %}
+              {{ (open_step_ticks_at_open|float(0)  * r + open_step_ticks_at_closed|float(0)  * (1 - r)) | round(0) }}
+            {% elif dir == 2 %}
+              {{ (close_step_ticks_at_open|float(0) * r + close_step_ticks_at_closed|float(0) * (1 - r)) | round(0) }}
+            {% else %} 0 {% endif %}
+          step: >
+            {% set minstep = (min_step_ticks|default(1))|int(1) %}
+            {{ [raw_step|int(0), minstep] | max }}
+
+          raw_target: >
+            {% if dir == 3 %} {{ cur + step }}        {# hoch → Ticks rauf #}
+            {% elif dir == 2 %} {{ cur - step }}      {# runter → Ticks runter #}
+            {% else %} {{ cur }} {% endif %}
+          target_upper: "{{ [ raw_target|int, maxv|int ] | min }}"
+          target: "{{ [ target_upper|int, 0 ] | max }}"
+      - choose:
+          - conditions: "{{ dir in [2,3] and target != cur }}"
+            sequence:
+              - action: mqtt.publish
+                data:
+                  topic: "logo/register/set/{{ logo_register_target }}"
+                  payload: "{{ target|int }}"
+                  qos: 1
+                  retain: false
+
+  # -------------------------------------------------------
+  # Langdruck (Coil halten, bis Button losgelassen / Timeout)
+  # -------------------------------------------------------
+  util_blinds_longpress:
+    alias: "Blinds · Langdruck (Coil halten)"
+    mode: restart
+    fields:
+      is_up:
+        description: "true = Hoch-Langdruck, false = Runter-Langdruck"
+      coil_up_value:
+        description: "LOGO-Coilnummer für Hoch"
+      coil_down_value:
+        description: "LOGO-Coilnummer für Runter"
+      pressed_button_entity_id:
+        description: "Der gedrückte Button (binary_sensor.*)"
+
+    sequence:
+      - variables:
+          coil_num: "{{ (coil_up_value if is_up else coil_down_value) }}"
+      - action: mqtt.publish
+        data:
+          topic: "logo/coil/set/{{ coil_num }}"
+          payload: "ON"
+      - wait_template: "{{ is_state(pressed_button_entity_id, 'off') }}"
+        timeout: "00:00:20" # Safety-Timeout
+        continue_on_timeout: true
+      - action: mqtt.publish
+        data:
+          topic: "logo/coil/set/{{ coil_num }}"
+          payload: "OFF"
+
+  # -------------------------------------------------------
+  # Zähllogik: Klick-Fenster starten + Klick zählen
+  # -------------------------------------------------------
+  util_blinds_counter_click:
+    alias: "Blinds · Zähllogik (Start/Increment)"
+    mode: restart
+    fields:
+      is_up:
+        description: "true = Hoch-Taste, false = Runter-Taste"
+      counting_flag_entity_id:
+        description: "input_boolean zum Markieren des laufenden Zählfensters"
+      click_counter_entity_id:
+        description: "counter.* für die Klickanzahl"
+      last_direction_text_entity_id:
+        description: "input_text für letzte Richtung ('up'/'down')"
+      cover_entity_id:
+        description: "cover.* (für open/close im Fenster)"
+      tilt_flag_entity_id:
+        description: "input_boolean.*_tilted (wird bei 2× up getoggelt)"
+
+    sequence:
+      # Fenster starten, falls nicht aktiv
+      - if:
+          - condition: template
+            value_template: "{{ is_state(counting_flag_entity_id, 'off') }}"
+        then:
+          - action: input_boolean.turn_on
+            target: { entity_id: "{{ counting_flag_entity_id }}" }
+          - action: input_text.set_value
+            target: { entity_id: "{{ last_direction_text_entity_id }}" }
+            data: { value: "{{ 'up' if is_up else 'down' }}" }
+          - action: script.turn_on
+            target:
+              entity_id: script.util_blinds_counter_window
+            data:
+              variables:
+                counting_flag_entity_id: "{{ counting_flag_entity_id }}"
+                click_counter_entity_id: "{{ click_counter_entity_id }}"
+                last_direction_text_entity_id: "{{ last_direction_text_entity_id }}"
+                cover_entity_id: "{{ cover_entity_id }}"
+                tilt_flag_entity_id: "{{ tilt_flag_entity_id }}"
+
+      # Klick zählen
+      - action: counter.increment
+        target: { entity_id: "{{ click_counter_entity_id }}" }
+
+  # -------------------------------------------------------
+  # Zählfenster (2s): wertet Klickzahl aus & führt Aktionen aus
+  # -------------------------------------------------------
+  util_blinds_counter_window:
+    alias: "Blinds · Zählfenster 2s (Auswertung)"
+    mode: restart
+    fields:
+      counting_flag_entity_id:
+        description: "input_boolean (Fenster aktiv?)"
+      click_counter_entity_id:
+        description: "counter.* (Klickanzahl)"
+      last_direction_text_entity_id:
+        description: "input_text ('up'/'down')"
+      cover_entity_id:
+        description: "cover.*"
+      tilt_flag_entity_id:
+        description: "input_boolean.*_tilted (2× up toggelt den Tilt-Flag)"
+
+      # Optionale Overrides (Script-Entity-IDs) – leer lassen, wenn ungenutzt
+      on_up_3:
+        description: "Script bei 3× up (optional)"
+      on_up_4:
+        description: "Script bei 4× up (optional)"
+      on_down_2:
+        description: "Script bei 2× down (optional)"
+      on_down_3:
+        description: "Script bei 3× down (optional)"
+      on_down_4:
+        description: "Script bei 4× down (optional)"
+
+    sequence:
+      - delay: "00:00:02" # Fensterlänge
+      - variables:
+          clicks: "{{ states(click_counter_entity_id) | int(0) }}"
+          dir: "{{ states(last_direction_text_entity_id) }}"
+
+      - choose:
+          # ==== Hoch-Taste ====
+          - conditions: "{{ dir == 'up' }}"
+            sequence:
+              - choose:
+                  # 1× up → öffnen
+                  - conditions: "{{ clicks == 1 }}"
+                    sequence:
+                      - action: cover.open_cover
+                        target: { entity_id: "{{ cover_entity_id }}" }
+
+                  # 2× up → Tilt-Flag toggeln (eigentliche Tilt-Fahrt macht der Blueprint)
+                  - conditions: "{{ clicks == 2 }}"
+                    sequence:
+                      - action: input_boolean.toggle
+                        target: { entity_id: "{{ tilt_flag_entity_id }}" }
+
+                  # 3× up → optionales Script
+                  - conditions: "{{ clicks == 3 and (on_up_3 | default('') | string) != '' }}"
+                    sequence:
+                      - action: script.turn_on
+                        target: { entity_id: "{{ on_up_3 }}" }
+
+                  # 4× up → optionales Script
+                  - conditions: "{{ clicks == 4 and (on_up_4 | default('') | string) != '' }}"
+                    sequence:
+                      - action: script.turn_on
+                        target: { entity_id: "{{ on_up_4 }}" }
+
+          # ==== Runter-Taste ====
+          - conditions: "{{ dir == 'down' }}"
+            sequence:
+              - choose:
+                  # 1× down → schließen
+                  - conditions: "{{ clicks == 1 }}"
+                    sequence:
+                      - action: cover.close_cover
+                        target: { entity_id: "{{ cover_entity_id }}" }
+
+                  # 2×/3×/4× down → jeweils optionales Script
+                  - conditions: "{{ clicks == 2 and (on_down_2 | default('') | string) != '' }}"
+                    sequence:
+                      - action: script.turn_on
+                        target: { entity_id: "{{ on_down_2 }}" }
+                  - conditions: "{{ clicks == 3 and (on_down_3 | default('') | string) != '' }}"
+                    sequence:
+                      - action: script.turn_on
+                        target: { entity_id: "{{ on_down_3 }}" }
+                  - conditions: "{{ clicks == 4 and (on_down_4 | default('') | string) != '' }}"
+                    sequence:
+                      - action: script.turn_on
+                        target: { entity_id: "{{ on_down_4 }}" }
+
+      # Fenster beenden & Counter zurücksetzen
+      - action: input_boolean.turn_off
+        target: { entity_id: "{{ counting_flag_entity_id }}" }
+      - action: counter.reset
+        target: { entity_id: "{{ click_counter_entity_id }}" }
