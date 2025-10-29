@@ -308,10 +308,7 @@ action:
                     then:
                       - action: input_boolean.turn_off
                         target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
-                      # tilt_current auf 0 setzen (ohne Bewegung, da Position hoch genug)
-                      - action: input_number.set_value
-                        target: { entity_id: "{{ var_tilt_current_entity_id }}" }
-                        data: { value: 0 }
+                      # tilt_current bleibt bei 100% (Lamellen sind beim Hochfahren horizontal)
 
                   # Tilt anwenden oder deaktivieren (Script entscheidet basierend auf tilt_enabled)
                   # Nur bei User/Automation-Fahrten und Position < Schwelle
