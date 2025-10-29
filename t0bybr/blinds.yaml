@@ -269,7 +269,7 @@ action:
                 {% endif %}
           - stop: "Tilt current updated on movement start"
 
-      # Fahrt endet: 2/3 → 0/1 → bestätigen + Richtung speichern + Tilt anwenden
+      # Fahrt endet: 2/3 → 0/1 → bestätigen + Richtung speichern + Tilt anwenden/deaktivieren
       - conditions: >
           {{
             trigger.entity_id == var_status_sensor_entity_id
@@ -295,19 +295,29 @@ action:
                     target: { entity_id: "{{ var_last_moving_state_number_entity_id }}" }
                     data: { value: "{{ dir_before }}" }
 
-                  # Tilt anwenden wenn enabled und Position < Schwelle
+                  # Position berechnen
                   - variables:
                       current_pct: >
                         {% set ticks = states(var_position_ticks_sensor_entity_id) | int(0) %}
                         {% set max_ticks = var_max_travel_ticks_value | int(1) %}
                         {{ (100.0 * ticks / max_ticks) | round(0) | int }}
-                      tilt_enabled: "{{ is_state(var_tilt_enabled_entity_id, 'on') }}"
                       state_current: "{{ states(var_state_entity_id) }}"
 
+                  # Tilt auto-disable wenn Position > Schwelle (z.B. 80%)
+                  - if: "{{ current_pct >= var_tilt_position_threshold_pct }}"
+                    then:
+                      - action: input_boolean.turn_off
+                        target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
+                      # tilt_current auf 0 setzen (ohne Bewegung, da Position hoch genug)
+                      - action: input_number.set_value
+                        target: { entity_id: "{{ var_tilt_current_entity_id }}" }
+                        data: { value: 0 }
+
+                  # Tilt anwenden oder deaktivieren (Script entscheidet basierend auf tilt_enabled)
+                  # Nur bei User/Automation-Fahrten und Position < Schwelle
                   - if: >
                       {{
-                        tilt_enabled
-                        and current_pct < var_tilt_position_threshold_pct
+                        current_pct < var_tilt_position_threshold_pct
                         and state_current in ['moving_user', 'moving_automation']
                       }}
                     then:
