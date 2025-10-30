@@ -303,12 +303,18 @@ action:
                         {{ (100.0 * ticks / max_ticks) | round(0) | int }}
                       state_current: "{{ states(var_state_entity_id) }}"
 
-                  # Tilt auto-disable wenn Position > Schwelle (z.B. 80%)
-                  - if: "{{ current_pct >= var_tilt_position_threshold_pct }}"
+                  # Tilt auto-disable wenn Position >= Schwelle UND Hochfahren (dir_before = 3)
+                  - if: "{{ current_pct >= var_tilt_position_threshold_pct and dir_before == 3 }}"
                     then:
                       - action: input_boolean.turn_off
                         target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
                       # tilt_current bleibt bei 100% (Lamellen sind beim Hochfahren horizontal)
+
+                  # Tilt auto-enable wenn Position < Schwelle UND Runterfahren (dir_before = 2)
+                  - if: "{{ current_pct < var_tilt_position_threshold_pct and dir_before == 2 }}"
+                    then:
+                      - action: input_boolean.turn_on
+                        target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
 
                   # Tilt anwenden oder deaktivieren (Script entscheidet basierend auf tilt_enabled)
                   # Nur bei User/Automation-Fahrten und Position < Schwelle
