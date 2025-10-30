@@ -310,21 +310,25 @@ action:
                         target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
                       # tilt_current bleibt unverändert
 
-                  # Tilt anwenden oder deaktivieren wenn Position < Schwelle
-                  # (Script entscheidet basierend auf tilt_enabled, ob aktiviert oder deaktiviert)
-                  - if: "{{ current_pct < var_tilt_position_threshold_pct }}"
+                  # Tilt anwenden/deaktivieren nur bei User/Automation-Fahrten (NICHT bei Tilt-Fahrten!)
+                  # Verhindert Race Condition: apply_tilt würde sich selbst unterbrechen
+                  - if: >
+                      {{
+                        current_pct < var_tilt_position_threshold_pct
+                        and state_current in ['moving_user', 'moving_automation']
+                      }}
                     then:
                       - action: script.util_blinds_apply_tilt
                         data:
                           floor_slug: "{{ var_floor_slug }}"
                           room_slug: "{{ var_room_slug }}"
-                    else:
-                      # Wenn >= 80%, State trotzdem auf idle setzen (falls nicht schon)
-                      - if: "{{ states(var_state_entity_id) in ['moving_user', 'moving_automation', 'moving_wind'] }}"
-                        then:
-                          - action: input_select.select_option
-                            target: { entity_id: "{{ var_state_entity_id }}" }
-                            data: { option: "idle" }
+
+                  # State zurück auf idle (wenn nicht durch Tilt-Script geändert)
+                  - if: "{{ states(var_state_entity_id) in ['moving_user', 'moving_automation'] }}"
+                    then:
+                      - action: input_select.select_option
+                        target: { entity_id: "{{ var_state_entity_id }}" }
+                        data: { option: "idle" }
           - stop: "Handled stop + tilt"
 
       # HA-Start/Reload → LOGO-Limit & UI-Helper syncen + State initialisieren
@@ -380,30 +384,18 @@ action:
               status_now: "{{ states(var_status_sensor_entity_id) | int(0) }}"
               state_current: "{{ states(var_state_entity_id) }}"
 
-          # Sofort-Stop wenn in Bewegung (aber Klick trotzdem zählen!)
+          # Sofort-Stop wenn in Bewegung
           - if:
               - condition: template
                 value_template: "{{ status_now in [2,3] or states(var_cover_entity_id) in ['opening','closing'] }}"
             then:
-              # Klick trotzdem zählen für Mehrfachklick-Erkennung (z.B. 2× während Fahrt)
-              - action: script.util_blinds_counter_click
-                data:
-                  is_up: "{{ is_up_press }}"
-                  counting_flag_entity_id: "{{ var_counting_flag_entity_id }}"
-                  click_counter_entity_id: "{{ var_click_counter_entity_id }}"
-                  last_direction_text_entity_id: "{{ var_last_direction_text_entity_id }}"
-                  cover_entity_id: "{{ var_cover_entity_id }}"
-                  floor_slug: "{{ var_floor_slug }}"
-                  room_slug: "{{ var_room_slug }}"
-                  state_entity_id: "{{ var_state_entity_id }}"
-              # Dann stoppen
               - action: cover.stop_cover
                 target: { entity_id: "{{ var_cover_entity_id }}" }
               # State auf idle setzen
               - action: input_select.select_option
                 target: { entity_id: "{{ var_state_entity_id }}" }
                 data: { option: "idle" }
-              - stop: "Stopped because cover was moving (click counted)"
+              - stop: "Stopped because cover was moving"
 
           # Kurz/Langdruck (0.6s)
           - wait_template: "{{ is_state( (var_up_button_entity_id if is_up_press else var_down_button_entity_id), 'off') }}"
