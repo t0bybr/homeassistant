@@ -262,8 +262,8 @@ action:
             and states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref']
           }}
         sequence:
-          # Fallback: Start aus idle → als moving_automation markieren
-          - if: "{{ states(var_state_entity_id) == 'idle' }}"
+          # Fallback: Start aus idle → als moving_automation markieren (nur wenn keine Tilt-Sequenz aktiv)
+          - if: "{{ states(var_state_entity_id) == 'idle' and (states(var_sequence_id_entity_id) | string) == '' }}"
             then:
               - action: input_select.select_option
                 target: { entity_id: "{{ var_state_entity_id }}" }
@@ -334,13 +334,14 @@ action:
                         data: { option: "idle" }
           - stop: "Handled stop + tilt"
 
-      # State → idle: Tilt anwenden (nur nach User/Automation-Fahrten)
+      # State → idle: Tilt anwenden (nur nach User/Automation-Fahrten, und nur wenn keine Sequenz aktiv)
       - conditions: >
           {{
             trigger.entity_id == var_state_entity_id
             and (trigger.from_state is not none)
             and (trigger.from_state.state | string) in ['moving_user','moving_automation']
             and (trigger.to_state.state   | string) == 'idle'
+            and (states(var_sequence_id_entity_id) | string) == ''
           }}
         sequence:
           - variables:
