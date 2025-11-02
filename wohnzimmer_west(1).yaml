@@ -175,6 +175,7 @@ automation:
         floor: "0"
 
         cover_entity: cover.blinds_0_living_room_west
+        state_entity_id: input_select.blinds_0_living_room_west_state
 
         up_button_entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_9
         down_button_entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_8

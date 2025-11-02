@@ -71,36 +71,7 @@ script:
       # Prüfen ob Tilt überhaupt aktiv
       - if: "{{ not tilt_enabled }}"
         then:
-          # Tilt wurde deaktiviert → Fahre zu 0% (vertikal geschlossen)
-          - if: "{{ tilt_current != 0 }}"
-            then:
-              - action: input_select.select_option
-                target: { entity_id: "{{ state_entity }}" }
-                data: { option: "moving_tilt" }
-
-              - variables:
-                  # Von current% zu 0% → runter fahren
-                  ticks_needed: "{{ (tilt_current / 100.0 * tilt_ticks_close) | round(0) | int }}"
-
-              - action: mqtt.publish
-                data:
-                  topic: "logo/register/set/{{ register_target }}"
-                  payload: "{{ current_pos - ticks_needed }}"
-
-              - wait_template: "{{ states(status_sensor) | int(0) in [0,1] }}"
-                timeout: "00:00:10"
-
-              - action: input_number.set_value
-                target: { entity_id: "{{ tilt_current_entity }}" }
-                data: { value: "0" }
-
-          # Cleanup
-          - action: input_text.set_value
-            target: { entity_id: "{{ sequence_id_entity }}" }
-            data: { value: "" }
-          - action: input_select.select_option
-            target: { entity_id: "{{ state_entity }}" }
-            data: { option: "idle" }
+          - stop: "Tilt not enabled"
           - stop: "Tilt disabled - moved to 0%"
 
       # Berechne Delta und entscheide: Direkt oder Referenz-Methode
