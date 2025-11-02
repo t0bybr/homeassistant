@@ -120,13 +120,10 @@ script:
                 target: { entity_id: "{{ tilt_current_entity }}" }
                 data: { value: "0" }
 
-          # Cleanup
+          # Cleanup (sequence_id leeren, State lässt Blueprint)
           - action: input_text.set_value
             target: { entity_id: "{{ sequence_id_entity }}" }
             data: { value: "" }
-          - action: input_select.select_option
-            target: { entity_id: "{{ state_entity }}" }
-            data: { option: "idle" }
           - stop: "Tilt disabled - moved to 0%"
 
       # Berechne Delta und entscheide: Direkt oder Referenz-Methode
