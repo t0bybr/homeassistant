@@ -318,6 +318,18 @@ action:
                         target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
                       # tilt_current bleibt unverändert
 
+                  # DEBUG: Fahrtende Info
+                  - action: persistent_notification.create
+                    data:
+                      title: "🛑 Fahrt beendet"
+                      message: |
+                        Position: {{ current_pct }}%
+                        State: {{ state_current }}
+                        Tilt enabled: {{ is_state(var_tilt_enabled_entity_id, 'on') }}
+                        Tilt current: {{ states(var_tilt_current_entity_id) }}%
+                        Letzte Richtung: {{ dir_before }} (2=runter, 3=hoch)
+                        Wird apply_tilt aufgerufen? {{ 'JA' if (current_pct < var_tilt_position_threshold_pct and state_current in ['moving_user', 'moving_automation']) else 'NEIN' }}
+
                   # Tilt anwenden/deaktivieren nur bei User/Automation-Fahrten (NICHT bei Tilt-Fahrten!)
                   # Verhindert Race Condition: apply_tilt würde sich selbst unterbrechen
                   - if: >
@@ -326,10 +338,21 @@ action:
                         and state_current in ['moving_user', 'moving_automation']
                       }}
                     then:
+                      - action: persistent_notification.create
+                        data:
+                          title: "✅ Rufe apply_tilt auf"
+                          message: "Script wird jetzt gestartet"
                       - action: script.util_blinds_apply_tilt
                         data:
                           floor_slug: "{{ var_floor_slug }}"
                           room_slug: "{{ var_room_slug }}"
+                    else:
+                      - action: persistent_notification.create
+                        data:
+                          title: "❌ apply_tilt NICHT aufgerufen"
+                          message: |
+                            Position Check: {{ current_pct }} < {{ var_tilt_position_threshold_pct }} = {{ current_pct < var_tilt_position_threshold_pct }}
+                            State Check: {{ state_current }} in ['moving_user', 'moving_automation'] = {{ state_current in ['moving_user', 'moving_automation'] }}
 
                   # State zurück auf idle (wenn nicht durch Tilt-Script geändert)
                   - if: "{{ states(var_state_entity_id) in ['moving_user', 'moving_automation'] }}"

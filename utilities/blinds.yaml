@@ -68,9 +68,27 @@ script:
           current_pos: "{{ states(position_sensor) | int(0) }}"
           register_target: "{{ states(register_target_entity) | int(535) }}"
 
+      # DEBUG: Script Entry
+      - action: persistent_notification.create
+        data:
+          title: "🟢 apply_tilt gestartet"
+          message: |
+            Tilt enabled: {{ tilt_enabled }}
+            Tilt current: {{ tilt_current }}%
+            Tilt target: {{ tilt_target }}%
+            Position: {{ current_pos }} ticks
+
       # Prüfen ob Tilt überhaupt aktiv
       - if: "{{ not tilt_enabled }}"
         then:
+          # DEBUG
+          - action: persistent_notification.create
+            data:
+              title: "🔴 Tilt DISABLED → fahre zu 0%"
+              message: |
+                Current: {{ tilt_current }}%
+                Wird bewegen? {{ 'JA' if tilt_current != 0 else 'NEIN (schon bei 0%)' }}
+
           # Tilt wurde deaktiviert → Fahre zu 0% (vertikal geschlossen)
           - if: "{{ tilt_current != 0 }}"
             then:
@@ -81,6 +99,14 @@ script:
               - variables:
                   # Von current% zu 0% → runter fahren
                   ticks_needed: "{{ (tilt_current / 100.0 * tilt_ticks_close) | round(0) | int }}"
+
+              - action: persistent_notification.create
+                data:
+                  title: "📤 MQTT gesendet"
+                  message: |
+                    Topic: logo/register/set/{{ register_target }}
+                    Payload: {{ current_pos - ticks_needed }}
+                    ({{ current_pos }} - {{ ticks_needed }} ticks)
 
               - action: mqtt.publish
                 data:
@@ -118,7 +144,21 @@ script:
       # Wenn keine Änderung nötig → direkt beenden
       - if: "{{ delta_pct == 0 }}"
         then:
+          - action: persistent_notification.create
+            data:
+              title: "⏸️ Kein Tilt nötig"
+              message: "Current = Target = {{ tilt_target }}%"
           - stop: "Tilt already at target"
+
+      # DEBUG: Tilt wird angewendet
+      - action: persistent_notification.create
+        data:
+          title: "🎯 Tilt wird angewendet"
+          message: |
+            Delta: {{ delta_pct }}%
+            Ticks needed: {{ ticks_for_delta }}
+            Methode: {{ 'Referenz' if use_reference else 'Direkt' }}
+            Position: {{ current_pos }} → {{ current_pos + ticks_for_delta }}
 
       # Generiere Sequence ID
       - variables:
