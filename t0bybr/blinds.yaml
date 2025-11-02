@@ -244,38 +244,56 @@ action:
               value: "{{ states(var_position_ticks_sensor_entity_id) | int }}"
 
       # Fahrt startet: 0/1 → 2/3 → Tilt-Current aktualisieren (nur wenn nicht Tilt-Operation)
+      # WICHTIG: Doppelter Schutz gegen Race Conditions:
+      # 1. State darf nicht moving_tilt/adjusting_tilt_ref sein
+      # 2. sequence_id muss leer sein (keine Tilt-Sequenz aktiv)
       - conditions: >
           {{
             trigger.entity_id == var_status_sensor_entity_id
             and (trigger.from_state is not none)
             and (trigger.from_state.state | int(0)) in [0,1]
             and (trigger.to_state.state   | int(0)) in [2,3]
-            and states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref']
-            and (states(var_sequence_id_entity_id) | string) == ''
           }}
         sequence:
-          # Fallback: Start aus idle → als moving_automation markieren
-          - if: "{{ states(var_state_entity_id) == 'idle' }}"
-            then:
-              - action: input_select.select_option
-                target: { entity_id: "{{ var_state_entity_id }}" }
-                data: { option: "moving_automation" }
-
-          - variables:
-              new_status: "{{ trigger.to_state.state | int(0) }}"
-          # Update tilt_current basierend auf Fahrtrichtung (nur bei User/Automation-Fahrten)
-          - action: input_number.set_value
-            target: { entity_id: "{{ var_tilt_current_entity_id }}" }
+          # DEBUG: Fahrtstart
+          - action: persistent_notification.create
             data:
-              value: >
-                {% if new_status == 3 %}
-                  100
-                {% elif new_status == 2 %}
-                  0
-                {% else %}
-                  {{ states(var_tilt_current_entity_id) | int(0) }}
-                {% endif %}
-          - stop: "Tilt current updated on movement start"
+              title: "▶️ Fahrt startet"
+              message: |
+                Status: {{ trigger.from_state.state }} → {{ trigger.to_state.state }}
+                State: {{ states(var_state_entity_id) }}
+                Sequence ID: "{{ states(var_sequence_id_entity_id) }}"
+                Wird tilt_current gesetzt? {{ 'JA' if (states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref'] and (states(var_sequence_id_entity_id) | string) == '') else 'NEIN' }}
+
+          # Nur bei normalen Fahrten (NICHT bei Tilt-Fahrten!)
+          - if: >
+              {{
+                states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref']
+                and (states(var_sequence_id_entity_id) | string) == ''
+              }}
+            then:
+              # Fallback: Start aus idle → als moving_automation markieren
+              - if: "{{ states(var_state_entity_id) == 'idle' }}"
+                then:
+                  - action: input_select.select_option
+                    target: { entity_id: "{{ var_state_entity_id }}" }
+                    data: { option: "moving_automation" }
+
+              - variables:
+                  new_status: "{{ trigger.to_state.state | int(0) }}"
+              # Update tilt_current basierend auf Fahrtrichtung (nur bei User/Automation-Fahrten)
+              - action: input_number.set_value
+                target: { entity_id: "{{ var_tilt_current_entity_id }}" }
+                data:
+                  value: >
+                    {% if new_status == 3 %}
+                      100
+                    {% elif new_status == 2 %}
+                      0
+                    {% else %}
+                      {{ states(var_tilt_current_entity_id) | int(0) }}
+                    {% endif %}
+          - stop: "Movement start handled"
 
       # Fahrt endet: 2/3 → 0/1 → bestätigen + Richtung speichern + Tilt anwenden/deaktivieren
       - conditions: >
