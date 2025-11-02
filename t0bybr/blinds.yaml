@@ -328,20 +328,24 @@ action:
                         Tilt enabled: {{ is_state(var_tilt_enabled_entity_id, 'on') }}
                         Tilt current: {{ states(var_tilt_current_entity_id) }}%
                         Letzte Richtung: {{ dir_before }} (2=runter, 3=hoch)
-                        Wird apply_tilt aufgerufen? {{ 'JA' if (current_pct < var_tilt_position_threshold_pct and state_current in ['moving_user', 'moving_automation']) else 'NEIN' }}
+                        Sequence ID: "{{ states(var_sequence_id_entity_id) }}"
+                        Wird apply_tilt aufgerufen? {{ 'JA' if (current_pct < var_tilt_position_threshold_pct and (states(var_sequence_id_entity_id) | string) == '') else 'NEIN' }}
 
-                  # Tilt anwenden/deaktivieren nur bei User/Automation-Fahrten (NICHT bei Tilt-Fahrten!)
-                  # Verhindert Race Condition: apply_tilt würde sich selbst unterbrechen
+                  # Tilt anwenden nur bei User/Automation-Fahrten (NICHT bei Tilt-Fahrten!)
+                  # Prüfung via sequence_id (race-condition-safe!)
+                  # - sequence_id leer = normale Fahrt → Tilt anwenden
+                  # - sequence_id gesetzt = Tilt-Fahrt läuft → NICHT anwenden
                   - if: >
                       {{
                         current_pct < var_tilt_position_threshold_pct
-                        and state_current in ['moving_user', 'moving_automation']
+                        and is_state(var_tilt_enabled_entity_id, 'on')
+                        and (states(var_sequence_id_entity_id) | string) == ''
                       }}
                     then:
                       - action: persistent_notification.create
                         data:
                           title: "✅ Rufe apply_tilt auf"
-                          message: "Script wird jetzt gestartet"
+                          message: "Script wird jetzt gestartet (sequence_id leer = normale Fahrt)"
                       - action: script.util_blinds_apply_tilt
                         data:
                           floor_slug: "{{ var_floor_slug }}"
@@ -352,7 +356,8 @@ action:
                           title: "❌ apply_tilt NICHT aufgerufen"
                           message: |
                             Position Check: {{ current_pct }} < {{ var_tilt_position_threshold_pct }} = {{ current_pct < var_tilt_position_threshold_pct }}
-                            State Check: {{ state_current }} in ['moving_user', 'moving_automation'] = {{ state_current in ['moving_user', 'moving_automation'] }}
+                            Tilt enabled: {{ is_state(var_tilt_enabled_entity_id, 'on') }}
+                            Sequence ID leer: {{ (states(var_sequence_id_entity_id) | string) == '' }} (Wert: "{{ states(var_sequence_id_entity_id) }}")
 
                   # State zurück auf idle (wenn nicht durch Tilt-Script geändert)
                   - if: "{{ states(var_state_entity_id) in ['moving_user', 'moving_automation'] }}"
