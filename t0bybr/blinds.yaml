@@ -63,6 +63,11 @@ blueprint:
       name: "Cover-Entität (Template-Cover)"
       selector: { entity: { filter: [{ domain: cover }] } }
 
+    # Interner State (input_select)
+    state_entity_id:
+      name: "State-Helper (input_select.*_state)"
+      selector: { entity: { filter: [{ domain: input_select }] } }
+
     # Tilt-Konfiguration
     tilt_target_default:
       name: "Standard-Neigung beim Toggle (0-100%)"
@@ -133,6 +138,10 @@ trigger:
   - trigger: state
     entity_id: !input movement_status_sensor_entity_id
 
+  # Statewechsel (für Tilt-Nachstellung bei Rückkehr nach idle)
+  - trigger: state
+    entity_id: !input state_entity_id
+
   # Wind-Sensor
   - trigger: state
     entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_20
@@ -149,7 +158,7 @@ variables:
   var_cover_entity_id: !input cover_entity
 
   # Abgeleitete Entitäten (müssen zu deinen Helpers passen!)
-  var_state_entity_id: "input_select.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_state"
+  var_state_entity_id: !input state_entity_id
   var_sequence_id_entity_id: "input_text.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_sequence_id"
 
   var_counting_flag_entity_id: "input_boolean.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_counting"
@@ -244,6 +253,13 @@ action:
             and (trigger.to_state.state   | int(0)) in [2,3]
           }}
         sequence:
+          # Fallback: Start aus idle → als moving_automation markieren
+          - if: "{{ states(var_state_entity_id) == 'idle' }}"
+            then:
+              - action: input_select.select_option
+                target: { entity_id: "{{ var_state_entity_id }}" }
+                data: { option: "moving_automation" }
+
           - variables:
               new_status: "{{ trigger.to_state.state | int(0) }}"
           # Update tilt_current basierend auf Fahrtrichtung
@@ -260,7 +276,7 @@ action:
                 {% endif %}
           - stop: "Tilt current updated on movement start"
 
-      # Fahrt endet: 2/3 → 0/1 → bestätigen + Richtung speichern + Tilt anwenden
+      # Fahrt endet: 2/3 → 0/1 → bestätigen + Richtung speichern
       - conditions: >
           {{
             trigger.entity_id == var_status_sensor_entity_id
@@ -286,27 +302,6 @@ action:
                     target: { entity_id: "{{ var_last_moving_state_number_entity_id }}" }
                     data: { value: "{{ dir_before }}" }
 
-                  # Tilt anwenden wenn enabled und Position < Schwelle
-                  - variables:
-                      current_pct: >
-                        {% set ticks = states(var_position_ticks_sensor_entity_id) | int(0) %}
-                        {% set max_ticks = var_max_travel_ticks_value | int(1) %}
-                        {{ (100.0 * ticks / max_ticks) | round(0) | int }}
-                      tilt_enabled: "{{ is_state(var_tilt_enabled_entity_id, 'on') }}"
-                      state_current: "{{ states(var_state_entity_id) }}"
-
-                  - if: >
-                      {{
-                        tilt_enabled
-                        and current_pct < var_tilt_position_threshold_pct
-                        and state_current in ['moving_user', 'moving_automation']
-                      }}
-                    then:
-                      - action: script.util_blinds_apply_tilt
-                        data:
-                          floor_slug: "{{ var_floor_slug }}"
-                          room_slug: "{{ var_room_slug }}"
-
                   # State zurück auf idle (wenn nicht durch Tilt-Script geändert)
                   - if: "{{ states(var_state_entity_id) in ['moving_user', 'moving_automation'] }}"
                     then:
@@ -314,6 +309,31 @@ action:
                         target: { entity_id: "{{ var_state_entity_id }}" }
                         data: { option: "idle" }
           - stop: "Handled stop + tilt"
+
+      # State → idle: Tilt anwenden (nur nach User/Automation-Fahrten)
+      - conditions: >
+          {{
+            trigger.entity_id == var_state_entity_id
+            and (trigger.from_state is not none)
+            and (trigger.from_state.state | string) in ['moving_user','moving_automation']
+            and (trigger.to_state.state   | string) == 'idle'
+          }}
+        sequence:
+          - variables:
+              current_pct: >
+                {% set ticks = states(var_position_ticks_sensor_entity_id) | int(0) %}
+                {% set max_ticks = var_max_travel_ticks_value | int(1) %}
+                {{ (100.0 * ticks / max_ticks) | round(0) | int }}
+              tilt_enabled: "{{ is_state(var_tilt_enabled_entity_id, 'on') }}"
+
+          - if: >
+              {{ tilt_enabled and current_pct < var_tilt_position_threshold_pct }}
+            then:
+              - action: script.util_blinds_apply_tilt
+                data:
+                  floor_slug: "{{ var_floor_slug }}"
+                  room_slug: "{{ var_room_slug }}"
+          - stop: "Applied tilt on idle"
 
       # HA-Start/Reload → LOGO-Limit & UI-Helper syncen + State initialisieren
       - conditions: >
