@@ -68,11 +68,25 @@ script:
           current_pos: "{{ states(position_sensor) | int(0) }}"
           register_target: "{{ states(register_target_entity) | int(535) }}"
 
+      # DEBUG: Script Entry
+      - action: persistent_notification.create
+        data:
+          title: "🟢 util_blinds_apply_tilt gestartet"
+          message: |
+            Floor: {{ floor_slug_str }}
+            Room: {{ room_slug_str }}
+            Tilt enabled: {{ tilt_enabled }}
+            Tilt current: {{ tilt_current }}%
+            Tilt target: {{ tilt_target }}%
+
       # Prüfen ob Tilt überhaupt aktiv
       - if: "{{ not tilt_enabled }}"
         then:
+          - action: persistent_notification.create
+            data:
+              title: "🛑 Tilt DISABLED - Script stoppt"
+              message: "Tilt ist nicht aktiviert, Script wird beendet"
           - stop: "Tilt not enabled"
-          - stop: "Tilt disabled - moved to 0%"
 
       # Berechne Delta und entscheide: Direkt oder Referenz-Methode
       - variables:
@@ -336,16 +350,44 @@ script:
                   # 2× up → Tilt toggeln + sofort anwenden wenn idle
                   - conditions: "{{ clicks == 2 }}"
                     sequence:
+                      # DEBUG: Log Toggle
+                      - action: persistent_notification.create
+                        data:
+                          title: "🔧 Tilt Toggle Debug"
+                          message: |
+                            Tilt enabled vorher: {{ states(tilt_enabled_entity) }}
+                            State: {{ states(state_entity_id) }}
+                            State-Entity-ID: {{ state_entity_id }}
+
                       - action: input_boolean.toggle
                         target: { entity_id: "{{ tilt_enabled_entity }}" }
+
+                      # DEBUG: Log Toggle nachher
+                      - action: persistent_notification.create
+                        data:
+                          title: "🔧 Tilt Toggle Debug (nachher)"
+                          message: |
+                            Tilt enabled nachher: {{ states(tilt_enabled_entity) }}
+                            State-Check: {{ states(state_entity_id) == 'idle' }}
+                            Wird apply_tilt aufgerufen: {{ 'JA' if states(state_entity_id) == 'idle' else 'NEIN' }}
 
                       # Sofort anwenden wenn idle (sonst wartet bis Fahrtende)
                       - if: "{{ states(state_entity_id) == 'idle' }}"
                         then:
+                          - action: persistent_notification.create
+                            data:
+                              title: "✅ Tilt Apply gestartet"
+                              message: "util_blinds_apply_tilt wird jetzt aufgerufen"
+
                           - action: script.util_blinds_apply_tilt
                             data:
                               floor_slug: "{{ floor_slug_str }}"
                               room_slug: "{{ room_slug_str }}"
+                        else:
+                          - action: persistent_notification.create
+                            data:
+                              title: "❌ Tilt Apply NICHT gestartet"
+                              message: "State ist nicht idle: {{ states(state_entity_id) }}"
 
                   # 3× up → optionales Script
                   - conditions: "{{ clicks == 3 and (on_up_3 | default('') | string) != '' }}"
