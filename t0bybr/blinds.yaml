@@ -379,15 +379,12 @@ action:
                             Sequence ID leer: {{ (states(var_sequence_id_entity_id) | string) == '' }}
                             State OK: {{ states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref'] }} (State: {{ states(var_state_entity_id) }})
 
-                  # State zurück auf idle (für ALLE Fahrt-States)
-                  # WICHTIG: Nur wenn KEINE Tilt-Sequenz aktiv ist!
-                  # Bei parallel mode können mehrere Instanzen gleichzeitig laufen
-                  # → State-Cleanup darf nicht parallel zu laufender Tilt-Sequenz erfolgen
-                  - if: >
-                      {{
-                        states(var_state_entity_id) in ['moving_user', 'moving_automation', 'moving_tilt', 'adjusting_tilt_ref']
-                        and (states(var_sequence_id_entity_id) | string) == ''
-                      }}
+                  # State zurück auf idle
+                  # WICHTIG: Nur für User/Automation-Fahrten, NICHT für Tilt-Fahrten!
+                  # Tilt-States (moving_tilt/adjusting_tilt_ref) werden beim NÄCHSTEN
+                  # Fahrtende auf idle gesetzt (wenn die Tilt-Fahrt wirklich endet)
+                  # Sonst: parallel mode Race → State zu früh idle → tilt_current überschrieben!
+                  - if: "{{ states(var_state_entity_id) in ['moving_user', 'moving_automation'] }}"
                     then:
                       - action: persistent_notification.create
                         data:
@@ -396,14 +393,21 @@ action:
                       - action: input_select.select_option
                         target: { entity_id: "{{ var_state_entity_id }}" }
                         data: { option: "idle" }
-                    else:
+
+                  # Tilt-States: Cleanup nur wenn Fahrt wirklich zu Ende (keine aktive Sequenz)
+                  - if: >
+                      {{
+                        states(var_state_entity_id) in ['moving_tilt', 'adjusting_tilt_ref']
+                        and (states(var_sequence_id_entity_id) | string) == ''
+                      }}
+                    then:
                       - action: persistent_notification.create
                         data:
-                          title: "⏸️ State Cleanup übersprungen"
-                          message: |
-                            State: {{ states(var_state_entity_id) }}
-                            Sequence ID: "{{ states(var_sequence_id_entity_id) }}"
-                            (Tilt-Sequenz noch aktiv)
+                          title: "🔄 Tilt State Cleanup (sicher)"
+                          message: "State {{ states(var_state_entity_id) }} → idle (sequence_id leer)"
+                      - action: input_select.select_option
+                        target: { entity_id: "{{ var_state_entity_id }}" }
+                        data: { option: "idle" }
           - stop: "Handled stop + tilt"
 
       # HA-Start/Reload → LOGO-Limit & UI-Helper syncen + State initialisieren
