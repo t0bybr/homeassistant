@@ -198,9 +198,7 @@ script:
                     data:
                       title: "🚨 SEQUENCE INTERRUPTED!"
                       message: "Sequence ID stimmt nicht überein!"
-                  - action: input_select.select_option
-                    target: { entity_id: "{{ state_entity }}" }
-                    data: { option: "idle" }
+                  # State lässt Blueprint (wie bei normalem Ende auch)
                   - stop: "Sequence interrupted"
 
               # DEBUG: Vor set_value
@@ -238,9 +236,7 @@ script:
               # Prüfe Sequence ID (mit String-Cast)
               - if: "{{ (states(sequence_id_entity) | string) != (seq_id | string) }}"
                 then:
-                  - action: input_select.select_option
-                    target: { entity_id: "{{ state_entity }}" }
-                    data: { option: "idle" }
+                  # State lässt Blueprint
                   - stop: "Sequence interrupted at step 1"
 
               - delay: "00:00:0.5"
@@ -261,9 +257,7 @@ script:
               # Prüfe Sequence ID (mit String-Cast)
               - if: "{{ (states(sequence_id_entity) | string) != (seq_id | string) }}"
                 then:
-                  - action: input_select.select_option
-                    target: { entity_id: "{{ state_entity }}" }
-                    data: { option: "idle" }
+                  # State lässt Blueprint
                   - stop: "Sequence interrupted at step 2"
 
               - action: input_number.set_value
