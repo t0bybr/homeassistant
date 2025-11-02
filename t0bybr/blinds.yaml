@@ -379,8 +379,9 @@ action:
                             Sequence ID leer: {{ (states(var_sequence_id_entity_id) | string) == '' }}
                             State OK: {{ states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref'] }} (State: {{ states(var_state_entity_id) }})
 
-                  # State zurück auf idle (wenn nicht durch Tilt-Script geändert)
-                  - if: "{{ states(var_state_entity_id) in ['moving_user', 'moving_automation'] }}"
+                  # State zurück auf idle (für ALLE Fahrt-States)
+                  # Script setzt State nicht mehr auf idle, deshalb muss Blueprint das machen
+                  - if: "{{ states(var_state_entity_id) in ['moving_user', 'moving_automation', 'moving_tilt', 'adjusting_tilt_ref'] }}"
                     then:
                       - action: input_select.select_option
                         target: { entity_id: "{{ var_state_entity_id }}" }
