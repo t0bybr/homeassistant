@@ -183,17 +183,43 @@ script:
               - wait_template: "{{ states(status_sensor) | int(0) in [0,1] }}"
                 timeout: "00:00:10"
 
+              # DEBUG: Nach wait
+              - action: persistent_notification.create
+                data:
+                  title: "⏱️ Wait beendet (Direkt-Methode)"
+                  message: |
+                    Status: {{ states(status_sensor) }}
+                    Sequence ID aktuell: {{ states(sequence_id_entity) }}
+                    Sequence ID erwartet: {{ seq_id }}
+                    Match: {{ states(sequence_id_entity) == seq_id }}
+
               # Prüfe Sequence ID
               - if: "{{ states(sequence_id_entity) != seq_id }}"
                 then:
+                  - action: persistent_notification.create
+                    data:
+                      title: "🚨 SEQUENCE INTERRUPTED!"
+                      message: "Sequence ID stimmt nicht überein!"
                   - action: input_select.select_option
                     target: { entity_id: "{{ state_entity }}" }
                     data: { option: "idle" }
                   - stop: "Sequence interrupted"
 
+              # DEBUG: Vor set_value
+              - action: persistent_notification.create
+                data:
+                  title: "📝 Setze tilt_current"
+                  message: "Vorher: {{ states(tilt_current_entity) }}%, Nachher: {{ tilt_target }}%"
+
               - action: input_number.set_value
                 target: { entity_id: "{{ tilt_current_entity }}" }
                 data: { value: "{{ tilt_target }}" }
+
+              # DEBUG: Nach set_value
+              - action: persistent_notification.create
+                data:
+                  title: "✅ tilt_current gesetzt"
+                  message: "Neuer Wert: {{ states(tilt_current_entity) }}%"
 
           # Referenz-Methode (Bewegung zu klein)
           - conditions: "{{ use_reference }}"
