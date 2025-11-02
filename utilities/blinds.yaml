@@ -189,12 +189,13 @@ script:
                   title: "⏱️ Wait beendet (Direkt-Methode)"
                   message: |
                     Status: {{ states(status_sensor) }}
-                    Sequence ID aktuell: {{ states(sequence_id_entity) }}
-                    Sequence ID erwartet: {{ seq_id }}
-                    Match: {{ states(sequence_id_entity) == seq_id }}
+                    Sequence ID aktuell: "{{ states(sequence_id_entity) }}"
+                    Sequence ID erwartet: "{{ seq_id }}"
+                    Match (alt): {{ states(sequence_id_entity) == seq_id }}
+                    Match (string): {{ (states(sequence_id_entity) | string) == (seq_id | string) }}
 
-              # Prüfe Sequence ID
-              - if: "{{ states(sequence_id_entity) != seq_id }}"
+              # Prüfe Sequence ID (mit String-Cast gegen Float-Precision-Probleme)
+              - if: "{{ (states(sequence_id_entity) | string) != (seq_id | string) }}"
                 then:
                   - action: persistent_notification.create
                     data:
@@ -237,8 +238,8 @@ script:
               - wait_template: "{{ states(status_sensor) | int(0) in [0,1] }}"
                 timeout: "00:00:10"
 
-              # Prüfe Sequence ID
-              - if: "{{ states(sequence_id_entity) != seq_id }}"
+              # Prüfe Sequence ID (mit String-Cast)
+              - if: "{{ (states(sequence_id_entity) | string) != (seq_id | string) }}"
                 then:
                   - action: input_select.select_option
                     target: { entity_id: "{{ state_entity }}" }
@@ -260,8 +261,8 @@ script:
               - wait_template: "{{ states(status_sensor) | int(0) in [0,1] }}"
                 timeout: "00:00:10"
 
-              # Prüfe Sequence ID
-              - if: "{{ states(sequence_id_entity) != seq_id }}"
+              # Prüfe Sequence ID (mit String-Cast)
+              - if: "{{ (states(sequence_id_entity) | string) != (seq_id | string) }}"
                 then:
                   - action: input_select.select_option
                     target: { entity_id: "{{ state_entity }}" }
