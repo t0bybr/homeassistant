@@ -251,8 +251,16 @@ action:
             and (trigger.from_state.state | int(0)) in [0,1]
             and (trigger.to_state.state   | int(0)) in [2,3]
             and states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref']
+            and (states(var_sequence_id_entity_id) | string) == ''
           }}
         sequence:
+          # Fallback: Start aus idle → als moving_automation markieren
+          - if: "{{ states(var_state_entity_id) == 'idle' }}"
+            then:
+              - action: input_select.select_option
+                target: { entity_id: "{{ var_state_entity_id }}" }
+                data: { option: "moving_automation" }
+
           - variables:
               new_status: "{{ trigger.to_state.state | int(0) }}"
           # Update tilt_current basierend auf Fahrtrichtung (nur bei User/Automation-Fahrten)

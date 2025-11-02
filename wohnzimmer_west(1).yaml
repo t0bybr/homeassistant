@@ -226,6 +226,12 @@ cover:
         # --- Öffnen (auf 100% Ticks) ---
         open_cover:
           sequence:
+            # State auf moving_user setzen
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.blinds_0_living_room_west_state
+              data:
+                option: "moving_user"
             - action: mqtt.publish
               data:
                 topic: "logo/register/set/{{ states('input_number.blinds_0_living_room_west_logo_register_target') | int }}"
@@ -239,6 +245,12 @@ cover:
         # --- Schließen (auf 0 Ticks) ---
         close_cover:
           sequence:
+            # State auf moving_user setzen
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.blinds_0_living_room_west_state
+              data:
+                option: "moving_user"
             - action: mqtt.publish
               data:
                 topic: "logo/register/set/{{ states('input_number.blinds_0_living_room_west_logo_register_target') | int }}"
@@ -260,6 +272,12 @@ cover:
         # --- Setzen einer absoluten Position in % (→ Ticks) ---
         set_cover_position:
           sequence:
+            # State auf moving_user setzen
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.blinds_0_living_room_west_state
+              data:
+                option: "moving_user"
             - variables:
                 max_travel_ticks: "{{ states('input_number.blinds_0_living_room_west_max_travel_ticks') | int(1) }}"
                 target_ticks: "{{ (position | float(0) / 100 * max_travel_ticks) | int(0) }}"
