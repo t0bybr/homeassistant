@@ -32,6 +32,10 @@ input_boolean:
   blinds_0_living_room_west_tilt_enabled:
     name: "Jalousie West - Neigung aktiviert"
     icon: mdi:blinds
+  blinds_0_living_room_west_tilt_lock:
+    name: "Jalousie West - Tilt Operation Lock (intern)"
+    initial: false
+    icon: mdi:lock
 
 input_select:
   blinds_0_living_room_west_state:
@@ -167,6 +171,22 @@ counter:
     name: "Jalousie West - Klickzähler"
     initial: 0
     icon: mdi:counter
+
+# =========================================================
+# Template Sensors
+# =========================================================
+
+binary_sensor:
+  - platform: template
+    sensors:
+      blinds_0_living_room_west_tilt_available:
+        friendly_name: "Jalousie West - Tilt verfügbar"
+        icon_template: mdi:check-circle
+        value_template: >
+          {% set status = states('sensor.mosquitto_broker_mqtt_logo_hr_104_status') | int(0) %}
+          {% set pos = states('sensor.mosquitto_broker_mqtt_logo_hr_104_position_raw') | int(0) %}
+          {% set pos_pct = (100.0 * pos / 552) | round(0) | int %}
+          {{ status == 1 and pos_pct < 80 }}
 
 # =========================================================
 # Automation (Blueprint-Verwendung)

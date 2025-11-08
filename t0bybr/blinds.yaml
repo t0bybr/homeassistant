@@ -68,6 +68,11 @@ blueprint:
       name: "Cover-Entität (Template-Cover)"
       selector: { entity: { filter: [{ domain: cover }] } }
 
+    # Tilt-Entitäten (für Trigger)
+    tilt_enabled_entity_id:
+      name: "Tilt Enabled Entity (input_boolean)"
+      selector: { entity: { filter: [{ domain: input_boolean }] } }
+
     # Tilt-Konfiguration
     tilt_target_default:
       name: "Standard-Neigung beim Toggle (0-100%)"
@@ -115,35 +120,64 @@ max: 10
 # TRIGGER
 # -----------------------------
 trigger:
+  # === HAUPTAUTOMATION ===
+
   # Taster
   - trigger: state
     entity_id: !input up_button_entity_id
     from: "off"
     to: "on"
+    id: button_up
+
   - trigger: state
     entity_id: !input down_button_entity_id
     from: "off"
     to: "on"
+    id: button_down
 
   # HA-Start → Limit setzen
   - trigger: homeassistant
     event: start
+    id: ha_start
 
   # Automations-Reload → Limit erneut setzen
   - trigger: event
     event_type: automation_reloaded
-
-  # Positionsänderung (Ticks) – für Tilt-Reset > Schwelle
-  - trigger: state
-    entity_id: !input position_ticks_sensor_entity_id
+    id: automation_reload
 
   # Statuswechsel (Fahrt beginnt/endet)
   - trigger: state
     entity_id: !input movement_status_sensor_entity_id
+    id: status_change
 
   # Wind-Sensor
   - trigger: state
     entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_20
+    id: wind_change
+
+  # === TILT-CONTROLLER ===
+
+  # Tilt manuell togglet (2× Hoch)
+  - trigger: state
+    entity_id: !input tilt_enabled_entity_id
+    id: tilt_toggle
+
+  # Fahrt endet (für Auto-Korrektur)
+  - trigger: state
+    entity_id: !input movement_status_sensor_entity_id
+    from:
+      - "2"
+      - "3"
+    to:
+      - "0"
+      - "1"
+    id: movement_ended_tilt
+
+  # Position überschreitet 80% (Auto-Disable)
+  - trigger: numeric_state
+    entity_id: !input position_ticks_sensor_entity_id
+    above: 441  # 80% von 552 Ticks (wird pro Jalousie konfiguriert)
+    id: position_high_tilt
 
 # -----------------------------
 # VARIABLEN (sprechende Namen)
@@ -171,6 +205,7 @@ variables:
 
   # Tilt-Entitäten
   var_tilt_enabled_entity_id: "input_boolean.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_enabled"
+  var_tilt_lock_entity_id: "input_boolean.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_lock"
   var_tilt_current_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_current"
   var_tilt_target_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_target"
   var_tilt_ticks_close_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_ticks_close"
