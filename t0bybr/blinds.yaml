@@ -449,7 +449,8 @@ action:
 
             # ELSE: Bedingungen nicht erfüllt → Toggle rückgängig
             default:
-              - action: input_boolean.toggle
+              # Setze explizit zurück auf ORIGINAL-State (nicht toggle, um Endlosschleife zu vermeiden!)
+              - action: input_boolean.turn_{{ 'on' if trigger.from_state.state == 'on' else 'off' }}
                 target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
 
               - action: persistent_notification.create
@@ -494,8 +495,9 @@ action:
               - stop: "Auto-Disable at position >= 80%"
 
           # tilt_current setzen basierend auf Fahrt-Richtung
-          # ABER NUR wenn nicht gerade eine Tilt-Operation läuft (Script setzt dann selbst)
-          - if: "{{ state_current not in ['moving_tilt', 'adjusting_tilt_ref'] }}"
+          # ABER NUR wenn nicht gerade eine Tilt-Operation läuft (Lock prüfen!)
+          # (State kann bereits "idle" sein durch den anderen movement-ended Trigger!)
+          - if: "{{ not tilt_lock }}"
             then:
               - action: input_number.set_value
                 target: { entity_id: "{{ var_tilt_current_entity_id }}" }
@@ -572,6 +574,13 @@ action:
                       message: |
                         Position nach Tilt wäre {{ position_after_tilt_pct }}% >= 80%
                         → Tilt wurde deaktiviert um Endlosschleife zu vermeiden
+
+          # State zurücksetzen wenn es ein Tilt-State war
+          - if: "{{ state_current in ['moving_tilt', 'adjusting_tilt_ref'] }}"
+            then:
+              - action: input_select.select_option
+                target: { entity_id: "{{ var_state_entity_id }}" }
+                data: { option: "idle" }
 
       # Trigger: Position >= 80% während Fahrt (Auto-Disable)
       - conditions: "{{ trigger.id == 'position_high_tilt' }}"
