@@ -125,6 +125,11 @@ script:
                 target: { entity_id: "{{ tilt_current_entity }}" }
                 data: { value: "0" }
 
+              # State zurück auf idle
+              - action: input_select.select_option
+                target: { entity_id: "{{ state_entity }}" }
+                data: { option: "idle" }
+
           # Lock aufheben
           - action: input_boolean.turn_off
             target: { entity_id: "{{ tilt_lock_entity }}" }
@@ -227,6 +232,11 @@ script:
                   title: "✅ tilt_current gesetzt"
                   message: "Neuer Wert: {{ states(tilt_current_entity) }}%"
 
+              # State zurück auf idle
+              - action: input_select.select_option
+                target: { entity_id: "{{ state_entity }}" }
+                data: { option: "idle" }
+
           # Referenz-Methode (Bewegung zu klein)
           - conditions: "{{ use_reference }}"
             sequence:
@@ -279,6 +289,11 @@ script:
               - action: input_number.set_value
                 target: { entity_id: "{{ tilt_current_entity }}" }
                 data: { value: "{{ tilt_target }}" }
+
+              # State zurück auf idle
+              - action: input_select.select_option
+                target: { entity_id: "{{ state_entity }}" }
+                data: { option: "idle" }
 
       # Sequence fertig → Blueprint darf now räumen (markiere als "done")
       - if: "{{ seq_id is defined }}"

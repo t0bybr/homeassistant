@@ -494,10 +494,13 @@ action:
               - stop: "Auto-Disable at position >= 80%"
 
           # tilt_current setzen basierend auf Fahrt-Richtung
-          - action: input_number.set_value
-            target: { entity_id: "{{ var_tilt_current_entity_id }}" }
-            data:
-              value: "{{ 0 if dir_before == 2 else 100 }}"
+          # ABER NUR wenn nicht gerade eine Tilt-Operation läuft (Script setzt dann selbst)
+          - if: "{{ state_current not in ['moving_tilt', 'adjusting_tilt_ref'] }}"
+            then:
+              - action: input_number.set_value
+                target: { entity_id: "{{ var_tilt_current_entity_id }}" }
+                data:
+                  value: "{{ 0 if dir_before == 2 else 100 }}"
 
           # Lookahead berechnen
           - variables:
