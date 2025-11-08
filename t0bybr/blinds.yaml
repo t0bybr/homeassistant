@@ -150,6 +150,11 @@ trigger:
     entity_id: !input movement_status_sensor_entity_id
     id: status_change
 
+  # Position-Änderungen (für Backup + Recovery)
+  - trigger: state
+    entity_id: !input position_ticks_sensor_entity_id
+    id: position_change
+
   # Wind-Sensor
   - trigger: state
     entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_20
@@ -242,7 +247,7 @@ action:
       # Wind-Ende Sync
       - conditions: >
           {{
-            trigger.entity_id == 'binary_sensor.mosquitto_broker_mqtt_logo_coil_20'
+            trigger.id == 'wind_change'
             and trigger.from_state.state == 'on'
             and trigger.to_state.state == 'off'
           }}
@@ -255,7 +260,7 @@ action:
       # Wenn die Logo neu startet und die Positionswerte nicht mehr passen
       - conditions: >
           {{
-            trigger.entity_id == var_position_ticks_sensor_entity_id
+            trigger.id == 'position_change'
             and (trigger.to_state.state is not none)
             and (trigger.to_state.state | int in [0])
             and (states(var_position_backup_number_entity_id) | int(-1) not in [0])
@@ -269,7 +274,7 @@ action:
       # Positionswert in Backup schreiben
       - conditions: >
           {{
-            trigger.entity_id == var_position_ticks_sensor_entity_id
+            trigger.id == 'position_change'
             and (trigger.to_state.state is not none)
           }}
         sequence:
@@ -341,14 +346,7 @@ action:
           - stop: "Handled movement end"
 
       # HA-Start/Reload → LOGO-Limit & UI-Helper syncen + State initialisieren
-      - conditions: >
-          {{
-            trigger.platform == 'homeassistant'
-            or (
-              trigger.platform == 'event'
-              and trigger.event.event_type == 'automation_reloaded'
-            )
-          }}
+      - conditions: "{{ trigger.id in ['ha_start', 'automation_reload'] }}"
         sequence:
           - action: mqtt.publish
             data:
@@ -590,14 +588,10 @@ action:
                   title: "🚫 Auto-Disable (während Fahrt)"
                   message: "Position überschritt 80% während Fahrt → Tilt deaktiviert"
       # Taster gedrückt → Sofort-Stop, dann Kurz-/Langdruck mit State-Management
-      - conditions: >
-          {{
-            trigger.platform == 'state'
-            and trigger.entity_id in [var_up_button_entity_id, var_down_button_entity_id]
-          }}
+      - conditions: "{{ trigger.id in ['button_up', 'button_down'] }}"
         sequence:
           - variables:
-              is_up_press: "{{ trigger.entity_id == var_up_button_entity_id }}"
+              is_up_press: "{{ trigger.id == 'button_up' }}"
               status_now: "{{ states(var_status_sensor_entity_id) | int(0) }}"
               state_current: "{{ states(var_state_entity_id) }}"
 
