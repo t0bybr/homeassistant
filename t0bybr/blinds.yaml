@@ -496,24 +496,13 @@ action:
 
           # tilt_current setzen basierend auf Fahrt-Richtung
           # ABER NUR wenn es KEINE Tilt-Operation war!
-          # Check: sequence_id endet auf "|done" wenn apply_tilt fertig ist
-          - variables:
-              seq_id_current: "{{ states(var_sequence_id_entity_id) }}"
-              was_tilt_operation: "{{ seq_id_current.endswith('|done') }}"
-
-          - if: "{{ not tilt_lock and not was_tilt_operation }}"
+          # State Machine ist "Single Source of Truth"
+          - if: "{{ not tilt_lock and state_current not in ['moving_tilt', 'adjusting_tilt_ref'] }}"
             then:
               - action: input_number.set_value
                 target: { entity_id: "{{ var_tilt_current_entity_id }}" }
                 data:
                   value: "{{ 0 if dir_before == 2 else 100 }}"
-
-          # Sequence ID nach Tilt-Operation leeren
-          - if: "{{ was_tilt_operation }}"
-            then:
-              - action: input_text.set_value
-                target: { entity_id: "{{ var_sequence_id_entity_id }}" }
-                data: { value: "" }
 
           # Lookahead berechnen
           - variables:
