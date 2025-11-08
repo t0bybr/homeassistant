@@ -207,6 +207,9 @@ automation:
         position_ticks_sensor_entity_id: sensor.mosquitto_broker_mqtt_logo_hr_104_position_raw
         movement_status_sensor_entity_id: sensor.mosquitto_broker_mqtt_logo_hr_104_status
 
+        # Tilt Entity (für Trigger)
+        tilt_enabled_entity_id: input_boolean.blinds_0_living_room_west_tilt_enabled
+
         coil_up: 8303
         coil_down: 8304
         register_target: 535

@@ -551,6 +551,214 @@ action:
                 target: { entity_id: "{{ var_tilt_target_entity_id }}" }
                 data: { value: "{{ var_tilt_target_default }}" }
 
+      # ========================================
+      # TILT-CONTROLLER
+      # ========================================
+
+      # Trigger: Tilt manuell togglet (2× Hoch)
+      - conditions: "{{ trigger.id == 'tilt_toggle' }}"
+        sequence:
+          # Safety Delay
+          - delay: "00:00:01"
+
+          # Variablen sammeln
+          - variables:
+              tilt_enabled: "{{ is_state(var_tilt_enabled_entity_id, 'on') }}"
+              tilt_lock: "{{ is_state(var_tilt_lock_entity_id, 'on') }}"
+              status: "{{ states(var_status_sensor_entity_id) | int(0) }}"
+              position: "{{ states(var_position_ticks_sensor_entity_id) | int(0) }}"
+              position_pct: "{{ (100.0 * position / var_max_travel_ticks_value) | round(0) | int }}"
+
+              # Lookahead: Würde Tilt Position >= 80% machen?
+              tilt_current: "{{ states(var_tilt_current_entity_id) | int(0) }}"
+              tilt_target: "{{ states(var_tilt_target_entity_id) | int(75) }}"
+              delta_pct: "{{ tilt_target - tilt_current }}"
+              tilt_ticks_needed: >
+                {% if delta_pct > 0 %}
+                  {{ (delta_pct / 100.0 * states(var_tilt_ticks_open_entity_id) | int(15)) | round(0) | int }}
+                {% elif delta_pct < 0 %}
+                  {{ (delta_pct / 100.0 * states(var_tilt_ticks_close_entity_id) | int(14)) | round(0) | int }}
+                {% else %}
+                  0
+                {% endif %}
+              position_after_tilt: "{{ position + tilt_ticks_needed }}"
+              position_after_tilt_pct: "{{ (100.0 * position_after_tilt / var_max_travel_ticks_value) | round(0) | int }}"
+
+          # DEBUG Notification
+          - action: persistent_notification.create
+            data:
+              title: "🔄 Tilt Toggle erkannt"
+              message: |
+                Tilt enabled: {{ tilt_enabled }}
+                Status: {{ status }} (1=steht)
+                Position: {{ position_pct }}%
+                Lock: {{ tilt_lock }}
+                Delta: {{ delta_pct }}%
+                Ticks needed: {{ tilt_ticks_needed }}
+                Position nach Tilt: {{ position_after_tilt_pct }}%
+
+                Checks:
+                - Status == 1: {{ status == 1 }}
+                - Position < 80%: {{ position_pct < 80 }}
+                - Lock OFF: {{ not tilt_lock }}
+                - Lookahead < 80%: {{ position_after_tilt_pct < 80 }}
+
+          # Bedingungen prüfen
+          - choose:
+              # ALLE Bedingungen erfüllt → apply_tilt
+              - conditions: >
+                  {{
+                    status == 1
+                    and position_pct < 80
+                    and not tilt_lock
+                    and position_after_tilt_pct < 80
+                  }}
+                sequence:
+                  - action: script.util_blinds_apply_tilt
+                    data:
+                      floor_slug: "{{ var_floor_slug }}"
+                      room_slug: "{{ var_room_slug }}"
+
+            # ELSE: Bedingungen nicht erfüllt → Toggle rückgängig
+            default:
+              - action: input_boolean.toggle
+                target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
+
+              - action: persistent_notification.create
+                data:
+                  title: "⚠️ Tilt Toggle abgelehnt"
+                  message: |
+                    Tilt-Toggle wurde rückgängig gemacht.
+
+                    Gründe (eines trifft zu):
+                    - Jalousie in Bewegung (Status != 1)
+                    - Position >= 80%
+                    - Tilt-Operation läuft bereits (Lock)
+                    - Lookahead: Tilt würde Position >= 80% machen
+
+      # Trigger: Fahrt endet (Auto-Korrektur)
+      - conditions: "{{ trigger.id == 'movement_ended_tilt' }}"
+        sequence:
+          # Safety Delay
+          - delay: "00:00:01"
+
+          # Variablen sammeln
+          - variables:
+              tilt_enabled: "{{ is_state(var_tilt_enabled_entity_id, 'on') }}"
+              tilt_lock: "{{ is_state(var_tilt_lock_entity_id, 'on') }}"
+              state_current: "{{ states(var_state_entity_id) }}"
+              position: "{{ states(var_position_ticks_sensor_entity_id) | int(0) }}"
+              position_pct: "{{ (100.0 * position / var_max_travel_ticks_value) | round(0) | int }}"
+              dir_before: "{{ trigger.from_state.state | int(0) }}"
+
+          # Auto-Disable Check ZUERST (verhindert unnötigen apply_tilt Aufruf)
+          - if: "{{ position_pct >= var_tilt_position_threshold_pct and tilt_enabled }}"
+            then:
+              - action: input_boolean.turn_off
+                target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
+              - action: input_number.set_value
+                target: { entity_id: "{{ var_tilt_current_entity_id }}" }
+                data: { value: 100 }
+              - action: persistent_notification.create
+                data:
+                  title: "🚫 Auto-Disable"
+                  message: "Position {{ position_pct }}% >= 80% → Tilt deaktiviert"
+              - stop: "Auto-Disable at position >= 80%"
+
+          # tilt_current setzen basierend auf Fahrt-Richtung
+          - action: input_number.set_value
+            target: { entity_id: "{{ var_tilt_current_entity_id }}" }
+            data:
+              value: "{{ 0 if dir_before == 2 else 100 }}"
+
+          # Lookahead berechnen
+          - variables:
+              tilt_current: "{{ states(var_tilt_current_entity_id) | int(0) }}"
+              tilt_target: "{{ states(var_tilt_target_entity_id) | int(75) }}"
+              delta_pct: "{{ tilt_target - tilt_current }}"
+              tilt_ticks_needed: >
+                {% if delta_pct > 0 %}
+                  {{ (delta_pct / 100.0 * states(var_tilt_ticks_open_entity_id) | int(15)) | round(0) | int }}
+                {% elif delta_pct < 0 %}
+                  {{ (delta_pct / 100.0 * states(var_tilt_ticks_close_entity_id) | int(14)) | round(0) | int }}
+                {% else %}
+                  0
+                {% endif %}
+              position_after_tilt: "{{ position + tilt_ticks_needed }}"
+              position_after_tilt_pct: "{{ (100.0 * position_after_tilt / var_max_travel_ticks_value) | round(0) | int }}"
+
+          # DEBUG
+          - action: persistent_notification.create
+            data:
+              title: "🛑 Fahrt beendet - Tilt Check"
+              message: |
+                Tilt enabled: {{ tilt_enabled }}
+                Position: {{ position_pct }}%
+                State: {{ state_current }}
+                Lock: {{ tilt_lock }}
+                Current: {{ tilt_current }}% → Target: {{ tilt_target }}%
+                Delta: {{ delta_pct }}%
+                Ticks needed: {{ tilt_ticks_needed }}
+                Position nach Tilt: {{ position_after_tilt_pct }}%
+
+                Checks:
+                - Tilt enabled: {{ tilt_enabled }}
+                - Position < 80%: {{ position_pct < var_tilt_position_threshold_pct }}
+                - State OK: {{ state_current not in ['moving_tilt', 'adjusting_tilt_ref'] }}
+                - Lock OFF: {{ not tilt_lock }}
+                - Lookahead < 80%: {{ position_after_tilt_pct < 80 }}
+
+          # Bedingungen prüfen
+          - choose:
+              # ALLE Bedingungen erfüllt → apply_tilt
+              - conditions: >
+                  {{
+                    tilt_enabled
+                    and position_pct < var_tilt_position_threshold_pct
+                    and state_current not in ['moving_tilt', 'adjusting_tilt_ref']
+                    and not tilt_lock
+                    and position_after_tilt_pct < 80
+                  }}
+                sequence:
+                  - action: script.util_blinds_apply_tilt
+                    data:
+                      floor_slug: "{{ var_floor_slug }}"
+                      room_slug: "{{ var_room_slug }}"
+
+            # ELSE: Lookahead failed → Tilt deaktivieren
+            default:
+              - if: >
+                  {{
+                    tilt_enabled
+                    and position_after_tilt_pct >= 80
+                  }}
+                then:
+                  - action: input_boolean.turn_off
+                    target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
+                  - action: persistent_notification.create
+                    data:
+                      title: "⚠️ Lookahead: Tilt deaktiviert"
+                      message: |
+                        Position nach Tilt wäre {{ position_after_tilt_pct }}% >= 80%
+                        → Tilt wurde deaktiviert um Endlosschleife zu vermeiden
+
+      # Trigger: Position >= 80% während Fahrt (Auto-Disable)
+      - conditions: "{{ trigger.id == 'position_high_tilt' }}"
+        sequence:
+          - variables:
+              tilt_enabled: "{{ is_state(var_tilt_enabled_entity_id, 'on') }}"
+
+          - if: "{{ tilt_enabled }}"
+            then:
+              - action: input_boolean.turn_off
+                target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
+              - action: input_number.set_value
+                target: { entity_id: "{{ var_tilt_current_entity_id }}" }
+                data: { value: 100 }
+              - action: persistent_notification.create
+                data:
+                  title: "🚫 Auto-Disable (während Fahrt)"
+                  message: "Position überschritt 80% während Fahrt → Tilt deaktiviert"
       # Taster gedrückt → Sofort-Stop, dann Kurz-/Langdruck mit State-Management
       - conditions: >
           {{
