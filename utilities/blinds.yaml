@@ -121,6 +121,8 @@ script:
               - wait_template: "{{ states(status_sensor) | int(0) in [0,1] }}"
                 timeout: "00:00:10"
 
+              - delay: "00:00:01.5"
+
               - action: input_number.set_value
                 target: { entity_id: "{{ tilt_current_entity }}" }
                 data: { value: "0" }
@@ -252,7 +254,7 @@ script:
                   # State lässt Blueprint
                   - stop: "Sequence interrupted at step 1"
 
-              - delay: "00:00:0.5"
+              - delay: "00:00:01.5"
 
               # Schritt 2: Zu target% Tilt (hoch)
               - variables:
