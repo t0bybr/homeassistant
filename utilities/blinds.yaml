@@ -48,6 +48,7 @@ script:
           # Entitäten ableiten
           state_entity: "input_select.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_state"
           sequence_id_entity: "input_text.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_sequence_id"
+          tilt_lock_entity: "input_boolean.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_tilt_lock"
           tilt_enabled_entity: "input_boolean.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_tilt_enabled"
           tilt_current_entity: "input_number.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_tilt_current"
           tilt_target_entity: "input_number.blinds_{{ floor_slug_str }}_{{ room_slug_str }}_tilt_target"
@@ -77,6 +78,10 @@ script:
             Tilt current: {{ tilt_current }}%
             Tilt target: {{ tilt_target }}%
             Position: {{ current_pos }} ticks
+
+      # Lock setzen (verhindert Race Conditions / doppelte Ausführung)
+      - action: input_boolean.turn_on
+        target: { entity_id: "{{ tilt_lock_entity }}" }
 
       # Prüfen ob Tilt überhaupt aktiv
       - if: "{{ not tilt_enabled }}"
@@ -120,6 +125,9 @@ script:
                 target: { entity_id: "{{ tilt_current_entity }}" }
                 data: { value: "0" }
 
+          # Lock aufheben
+          - action: input_boolean.turn_off
+            target: { entity_id: "{{ tilt_lock_entity }}" }
           - stop: "Tilt disabled - moved to 0%"
 
       # Berechne Delta und entscheide: Direkt oder Referenz-Methode
@@ -141,6 +149,9 @@ script:
             data:
               title: "⏸️ Kein Tilt nötig"
               message: "Current = Target = {{ tilt_target }}%"
+          # Lock aufheben
+          - action: input_boolean.turn_off
+            target: { entity_id: "{{ tilt_lock_entity }}" }
           - stop: "Tilt already at target"
 
       # DEBUG: Tilt wird angewendet
@@ -194,6 +205,9 @@ script:
                     data:
                       title: "🚨 SEQUENCE INTERRUPTED!"
                       message: "Sequence ID stimmt nicht überein!"
+                  # Lock aufheben
+                  - action: input_boolean.turn_off
+                    target: { entity_id: "{{ tilt_lock_entity }}" }
                   # State lässt Blueprint (wie bei normalem Ende auch)
                   - stop: "Sequence interrupted"
 
@@ -232,6 +246,9 @@ script:
               # Prüfe Sequence ID (mit String-Cast)
               - if: "{{ (states(sequence_id_entity) | string) != (seq_id | string) }}"
                 then:
+                  # Lock aufheben
+                  - action: input_boolean.turn_off
+                    target: { entity_id: "{{ tilt_lock_entity }}" }
                   # State lässt Blueprint
                   - stop: "Sequence interrupted at step 1"
 
@@ -253,6 +270,9 @@ script:
               # Prüfe Sequence ID (mit String-Cast)
               - if: "{{ (states(sequence_id_entity) | string) != (seq_id | string) }}"
                 then:
+                  # Lock aufheben
+                  - action: input_boolean.turn_off
+                    target: { entity_id: "{{ tilt_lock_entity }}" }
                   # State lässt Blueprint
                   - stop: "Sequence interrupted at step 2"
 
@@ -263,6 +283,9 @@ script:
       # Sequence fertig → Blueprint darf now räumen (markiere als "done")
       - if: "{{ seq_id is defined }}"
         then:
+          # Lock aufheben (erfolgreicher Abschluss)
+          - action: input_boolean.turn_off
+            target: { entity_id: "{{ tilt_lock_entity }}" }
           - action: input_text.set_value
             target: { entity_id: "{{ sequence_id_entity }}" }
             data: { value: "{{ seq_id }}|done" }
