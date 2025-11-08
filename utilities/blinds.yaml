@@ -120,10 +120,6 @@ script:
                 target: { entity_id: "{{ tilt_current_entity }}" }
                 data: { value: "0" }
 
-          # Cleanup (sequence_id leeren, State lässt Blueprint)
-          - action: input_text.set_value
-            target: { entity_id: "{{ sequence_id_entity }}" }
-            data: { value: "" }
           - stop: "Tilt disabled - moved to 0%"
 
       # Berechne Delta und entscheide: Direkt oder Referenz-Methode
@@ -264,14 +260,12 @@ script:
                 target: { entity_id: "{{ tilt_current_entity }}" }
                 data: { value: "{{ tilt_target }}" }
 
-      # Cleanup
-      # WICHTIG: sequence_id leeren, aber State NICHT auf idle setzen!
-      # Der Blueprint setzt den State auf idle (blinds.yaml:357-365)
-      # Wenn wir hier idle setzen, ist der State zu früh idle und
-      # "Fahrt startet" Trigger überschreibt tilt_current fälschlicherweise!
-      - action: input_text.set_value
-        target: { entity_id: "{{ sequence_id_entity }}" }
-        data: { value: "" }
+      # Sequence fertig → Blueprint darf now räumen (markiere als "done")
+      - if: "{{ seq_id is defined }}"
+        then:
+          - action: input_text.set_value
+            target: { entity_id: "{{ sequence_id_entity }}" }
+            data: { value: "{{ seq_id }}|done" }
 
   # -------------------------------------------------------
   # Langdruck (Coil halten, bis Button losgelassen / Timeout)

@@ -70,7 +70,12 @@ input_number:
     max: 999
     mode: box
     step: 1
-
+  blinds_0_living_room_west_movement_start_ticks:
+    name: "Jalousie West - Last Movement Start (Ticks)"
+    min: 0
+    max: 999
+    mode: box
+    step: 1
   # LOGO Register-Nummern
   blinds_0_living_room_west_logo_register_counter:
     name: "Jalousie West - LOGO Register Counter"

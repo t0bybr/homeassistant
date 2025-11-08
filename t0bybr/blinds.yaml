@@ -167,6 +167,7 @@ variables:
   # Letzter Bewegungsstatus (input_number, 2=closing, 3=opening)
   var_last_moving_state_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_last_moving_state"
   var_position_backup_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_position_backup"
+  var_movement_start_ticks_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_movement_start_ticks"
 
   # Tilt-Entitäten
   var_tilt_enabled_entity_id: "input_boolean.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_enabled"
@@ -263,13 +264,26 @@ action:
                 Status: {{ trigger.from_state.state }} → {{ trigger.to_state.state }}
                 State: {{ states(var_state_entity_id) }}
                 Sequence ID: "{{ states(var_sequence_id_entity_id) }}"
-                Wird tilt_current gesetzt? {{ 'JA' if (states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref'] and (states(var_sequence_id_entity_id) | string) == '') else 'NEIN' }}
+                Wird tilt_current gesetzt? {{
+                  'JA'
+                  if (
+                    states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref']
+                    and (
+                      (states(var_sequence_id_entity_id) | string) == ''
+                      or (states(var_sequence_id_entity_id) | string).endswith('|done')
+                    )
+                  )
+                  else 'NEIN'
+                }}
 
           # Nur bei normalen Fahrten (NICHT bei Tilt-Fahrten!)
           - if: >
               {{
                 states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref']
-                and (states(var_sequence_id_entity_id) | string) == ''
+                and (
+                  (states(var_sequence_id_entity_id) | string) == ''
+                  or (states(var_sequence_id_entity_id) | string).endswith('|done')
+                )
               }}
             then:
               # Fallback: Start aus idle → als moving_automation markieren
@@ -281,18 +295,11 @@ action:
 
               - variables:
                   new_status: "{{ trigger.to_state.state | int(0) }}"
-              # Update tilt_current basierend auf Fahrtrichtung (nur bei User/Automation-Fahrten)
+                  current_ticks_start: "{{ states(var_position_ticks_sensor_entity_id) | int(0) }}"
+
               - action: input_number.set_value
-                target: { entity_id: "{{ var_tilt_current_entity_id }}" }
-                data:
-                  value: >
-                    {% if new_status == 3 %}
-                      100
-                    {% elif new_status == 2 %}
-                      0
-                    {% else %}
-                      {{ states(var_tilt_current_entity_id) | int(0) }}
-                    {% endif %}
+                target: { entity_id: "{{ var_movement_start_ticks_entity_id }}" }
+                data: { value: "{{ current_ticks_start }}" }
           - stop: "Movement start handled"
 
       # Fahrt endet: 2/3 → 0/1 → bestätigen + Richtung speichern + Tilt anwenden/deaktivieren
@@ -327,6 +334,12 @@ action:
                         {% set ticks = states(var_position_ticks_sensor_entity_id) | int(0) %}
                         {% set max_ticks = var_max_travel_ticks_value | int(1) %}
                         {{ (100.0 * ticks / max_ticks) | round(0) | int }}
+                      current_ticks_end: "{{ states(var_position_ticks_sensor_entity_id) | int(0) }}"
+                      start_ticks_value: "{{ states(var_movement_start_ticks_entity_id) | int(current_ticks_end) }}"
+                      delta_ticks_abs: "{{ (current_ticks_end - start_ticks_value) | abs }}"
+                      tilt_ticks_close_value: "{{ states(var_tilt_ticks_close_entity_id) | int(0) }}"
+                      tilt_ticks_open_value: "{{ states(var_tilt_ticks_open_entity_id) | int(0) }}"
+                      remaining_up_ticks_end: "{{ (var_max_travel_ticks_value | int(1)) - current_ticks_end }}"
                       state_current: "{{ states(var_state_entity_id) }}"
 
                   # Tilt auto-disable wenn Position >= Schwelle (unabhängig von Richtung)
@@ -335,6 +348,29 @@ action:
                       - action: input_boolean.turn_off
                         target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
                       # tilt_current bleibt unverändert
+
+                  # Snap tilt_current nur wenn Fahrt groß genug war
+                  - choose:
+                      - conditions: >
+                          {{
+                            dir_before == 2
+                            and state_current not in ['moving_tilt', 'adjusting_tilt_ref']
+                            and (delta_ticks_abs | int(0)) >= (tilt_ticks_close_value | int(0))
+                          }}
+                        sequence:
+                          - action: input_number.set_value
+                            target: { entity_id: "{{ var_tilt_current_entity_id }}" }
+                            data: { value: 0 }
+                      - conditions: >
+                          {{
+                            dir_before == 3
+                            and state_current not in ['moving_tilt', 'adjusting_tilt_ref']
+                            and (delta_ticks_abs | int(0)) >= (tilt_ticks_open_value | int(0))
+                          }}
+                        sequence:
+                          - action: input_number.set_value
+                            target: { entity_id: "{{ var_tilt_current_entity_id }}" }
+                            data: { value: 100 }
 
                   # DEBUG: Fahrtende Info
                   - action: persistent_notification.create
@@ -347,7 +383,17 @@ action:
                         Tilt current: {{ states(var_tilt_current_entity_id) }}%
                         Letzte Richtung: {{ dir_before }} (2=runter, 3=hoch)
                         Sequence ID: "{{ states(var_sequence_id_entity_id) }}"
-                        Wird apply_tilt aufgerufen? {{ 'JA' if (current_pct < var_tilt_position_threshold_pct and (states(var_sequence_id_entity_id) | string) == '') else 'NEIN' }}
+                        Wird apply_tilt aufgerufen? {{
+                          'JA'
+                          if (
+                            current_pct < var_tilt_position_threshold_pct
+                            and (
+                              (states(var_sequence_id_entity_id) | string) == ''
+                              or (states(var_sequence_id_entity_id) | string).endswith('|done')
+                            )
+                          )
+                          else 'NEIN'
+                        }}
 
                   # Tilt anwenden nur bei User/Automation-Fahrten (NICHT bei Tilt-Fahrten!)
                   # Doppelter Schutz:
@@ -357,7 +403,10 @@ action:
                       {{
                         current_pct < var_tilt_position_threshold_pct
                         and is_state(var_tilt_enabled_entity_id, 'on')
-                        and (states(var_sequence_id_entity_id) | string) == ''
+                        and (
+                          (states(var_sequence_id_entity_id) | string) == ''
+                          or (states(var_sequence_id_entity_id) | string).endswith('|done')
+                        )
                         and states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref']
                       }}
                     then:
@@ -376,7 +425,12 @@ action:
                           message: |
                             Position Check: {{ current_pct }} < {{ var_tilt_position_threshold_pct }} = {{ current_pct < var_tilt_position_threshold_pct }}
                             Tilt enabled: {{ is_state(var_tilt_enabled_entity_id, 'on') }}
-                            Sequence ID leer: {{ (states(var_sequence_id_entity_id) | string) == '' }}
+                            Sequence ID leer: {{
+                              (
+                                (states(var_sequence_id_entity_id) | string) == ''
+                                or (states(var_sequence_id_entity_id) | string).endswith('|done')
+                              )
+                            }}
                             State OK: {{ states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref'] }} (State: {{ states(var_state_entity_id) }})
 
                   # State zurück auf idle
@@ -398,7 +452,10 @@ action:
                   - if: >
                       {{
                         states(var_state_entity_id) in ['moving_tilt', 'adjusting_tilt_ref']
-                        and (states(var_sequence_id_entity_id) | string) == ''
+                        and (
+                          (states(var_sequence_id_entity_id) | string) == ''
+                          or (states(var_sequence_id_entity_id) | string).endswith('|done')
+                        )
                       }}
                     then:
                       - action: persistent_notification.create
@@ -408,6 +465,14 @@ action:
                       - action: input_select.select_option
                         target: { entity_id: "{{ var_state_entity_id }}" }
                         data: { option: "idle" }
+
+                  # Sequence-ID endgültig löschen, nachdem das Script "done" signalisiert
+                  - if: "{{ (states(var_sequence_id_entity_id) | string).endswith('|done') }}"
+                    then:
+                      - delay: "00:00:0.2"
+                      - action: input_text.set_value
+                        target: { entity_id: "{{ var_sequence_id_entity_id }}" }
+                        data: { value: "" }
           - stop: "Handled stop + tilt"
 
       # HA-Start/Reload → LOGO-Limit & UI-Helper syncen + State initialisieren
