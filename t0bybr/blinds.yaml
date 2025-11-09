@@ -419,25 +419,6 @@ action:
             then:
               - stop: "Auto-Disable hat tilt_enabled ausgeschaltet, nichts zu tun"
 
-          # DEBUG Notification
-          - action: persistent_notification.create
-            data:
-              title: "🔄 Tilt Toggle erkannt"
-              message: |
-                Tilt enabled: {{ tilt_enabled }}
-                Status: {{ status }} (1=steht)
-                Position: {{ position_pct }}%
-                Lock: {{ tilt_lock }}
-                Delta: {{ delta_pct }}%
-                Ticks needed: {{ tilt_ticks_needed }}
-                Position nach Tilt: {{ position_after_tilt_pct }}%
-
-                Checks:
-                - Status == 1: {{ status == 1 }}
-                - Position < 80%: {{ position_pct < 80 }}
-                - Lock OFF: {{ not tilt_lock }}
-                - Lookahead < 80%: {{ position_after_tilt_pct < 80 }}
-
           # Bedingungen prüfen
           - choose:
               # ALLE Bedingungen erfüllt → apply_tilt
@@ -459,18 +440,6 @@ action:
               # Setze explizit zurück auf ORIGINAL-State (nicht toggle, um Endlosschleife zu vermeiden!)
               - action: input_boolean.turn_{{ 'on' if trigger.from_state.state == 'on' else 'off' }}
                 target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
-
-              - action: persistent_notification.create
-                data:
-                  title: "⚠️ Tilt Toggle abgelehnt"
-                  message: |
-                    Tilt-Toggle wurde rückgängig gemacht.
-
-                    Gründe (eines trifft zu):
-                    - Jalousie in Bewegung (Status != 1)
-                    - Position >= 80%
-                    - Tilt-Operation läuft bereits (Lock)
-                    - Lookahead: Tilt würde Position >= 80% machen
 
       # Trigger: Fahrt endet (Auto-Korrektur)
       # Nur wenn KEINE Tilt-Operation läuft (sonst würde tilt_current überschrieben)
@@ -500,10 +469,6 @@ action:
               - action: input_number.set_value
                 target: { entity_id: "{{ var_tilt_current_entity_id }}" }
                 data: { value: 100 }
-              - action: persistent_notification.create
-                data:
-                  title: "🚫 Auto-Disable"
-                  message: "Position {{ position_pct }}% >= 80% → Tilt deaktiviert"
               - stop: "Auto-Disable at position >= 80%"
 
           # tilt_current setzen basierend auf Fahrt-Richtung
@@ -536,27 +501,6 @@ action:
               position_after_tilt: "{{ position + tilt_ticks_needed }}"
               position_after_tilt_pct: "{{ (100.0 * position_after_tilt / var_max_travel_ticks_value) | round(0) | int }}"
 
-          # DEBUG
-          - action: persistent_notification.create
-            data:
-              title: "🛑 Fahrt beendet - Tilt Check"
-              message: |
-                Tilt enabled: {{ tilt_enabled }}
-                Position: {{ position_pct }}%
-                State: {{ state_current }}
-                Lock: {{ tilt_lock }}
-                Current: {{ tilt_current }}% → Target: {{ tilt_target }}%
-                Delta: {{ delta_pct }}%
-                Ticks needed: {{ tilt_ticks_needed }}
-                Position nach Tilt: {{ position_after_tilt_pct }}%
-
-                Checks:
-                - Tilt enabled: {{ tilt_enabled }}
-                - Position < 80%: {{ position_pct < var_tilt_position_threshold_pct }}
-                - State OK: {{ state_current not in ['moving_tilt', 'adjusting_tilt_ref'] }}
-                - Lock OFF: {{ not tilt_lock }}
-                - Lookahead < 80%: {{ position_after_tilt_pct < 80 }}
-
           # Bedingungen prüfen
           - choose:
               # ALLE Bedingungen erfüllt → apply_tilt
@@ -584,12 +528,6 @@ action:
                 then:
                   - action: input_boolean.turn_off
                     target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
-                  - action: persistent_notification.create
-                    data:
-                      title: "⚠️ Lookahead: Tilt deaktiviert"
-                      message: |
-                        Position nach Tilt wäre {{ position_after_tilt_pct }}% >= 80%
-                        → Tilt wurde deaktiviert um Endlosschleife zu vermeiden
 
           # State wird von apply_tilt Script selbst zurückgesetzt (utilities/blinds.yaml:286)
 
@@ -606,10 +544,6 @@ action:
               - action: input_number.set_value
                 target: { entity_id: "{{ var_tilt_current_entity_id }}" }
                 data: { value: 100 }
-              - action: persistent_notification.create
-                data:
-                  title: "🚫 Auto-Disable (während Fahrt)"
-                  message: "Position überschritt 80% während Fahrt → Tilt deaktiviert"
       # Taster gedrückt → Sofort-Stop, dann Kurz-/Langdruck mit State-Management
       - conditions: "{{ trigger.id in ['button_up', 'button_down'] }}"
         sequence:
