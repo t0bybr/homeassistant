@@ -72,9 +72,6 @@ blueprint:
     tilt_enabled_entity_id:
       name: "Tilt Enabled Entity (input_boolean)"
       selector: { entity: { filter: [{ domain: input_boolean }] } }
-    state_entity_id:
-      name: "State Entity (input_select)"
-      selector: { entity: { filter: [{ domain: input_select }] } }
 
     # Tilt-Konfiguration
     tilt_target_default:
@@ -180,9 +177,6 @@ trigger:
       - "0"
       - "1"
     id: movement_ended_tilt
-    condition:
-      - condition: template
-        value_template: "{{ states(!input state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref'] }}"
 
   # Position überschreitet 80% (Auto-Disable)
   - trigger: numeric_state

@@ -209,7 +209,6 @@ automation:
 
         # Tilt Entity (für Trigger)
         tilt_enabled_entity_id: input_boolean.blinds_0_living_room_west_tilt_enabled
-        state_entity_id: input_select.blinds_0_living_room_west_state
 
         coil_up: 8303
         coil_down: 8304
