@@ -170,12 +170,6 @@ trigger:
   # Fahrt endet (für Auto-Korrektur)
   - trigger: state
     entity_id: !input movement_status_sensor_entity_id
-    from:
-      - "2"
-      - "3"
-    to:
-      - "0"
-      - "1"
     id: movement_ended_tilt
 
   # Position überschreitet 80% (Auto-Disable)
@@ -469,6 +463,8 @@ action:
       # Nur wenn KEINE Tilt-Operation läuft (sonst würde tilt_current überschrieben)
       - conditions:
           - "{{ trigger.id == 'movement_ended_tilt' }}"
+          - "{{ trigger.from_state.state in ['2', '3'] }}"
+          - "{{ trigger.to_state.state in ['0', '1'] }}"
           - "{{ states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref'] }}"
         sequence:
           # Safety Delay
