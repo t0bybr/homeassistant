@@ -45,9 +45,10 @@
 #    - tilt_ticks_open: XX (Ticks von vertikal zu horizontal, typ. 15)
 #    - min_motor_ticks: X (Minimale Motorlaufzeit, typ. 5)
 #
-# 4. TILT-KONFIGURATION:
-#    - tilt_target_default: XX (Standard-Neigung beim Toggle, typ. 75%)
-#    - tilt_position_threshold_pct: XX (Max. Position für Tilt, typ. 80%)
+# 4. TILT-KONFIGURATION (OPTIONAL - Defaults: 75% / 80%):
+#    - tilt_target_default: XX (Standard-Neigung beim Toggle, Default: 75%)
+#    - tilt_position_threshold_pct: XX (Max. Position für Tilt, Default: 80%)
+#    → Nur überschreiben wenn diese Jalousie andere Werte braucht!
 #
 # 5. ENTITY-NAMEN:
 #    - Alle "blinds_0_living_room_west" durch deinen Raum-Slug ersetzen
@@ -262,9 +263,9 @@ automation:
         # TODO: KALIBRIERUNG - Gesamter Fahrweg in Ticks (messen!)
         max_travel_ticks: 552
 
-        # TODO: TILT-KONFIGURATION - Zielneigung beim Toggle (typ. 75%)
+        # OPTIONAL: Tilt-Konfiguration (Defaults: 75% / 80%)
+        # Nur angeben wenn diese Jalousie andere Werte braucht!
         tilt_target_default: 75
-        # TODO: TILT-KONFIGURATION - Max. Position für Tilt (typ. 80%)
         tilt_position_threshold_pct: 80
 
 # =========================================================

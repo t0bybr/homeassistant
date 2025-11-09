@@ -253,9 +253,9 @@ down_button_entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_10
 
 ```yaml
 # TODO: LOGO REGISTER - Register-Nummern
-register_target: 536
-register_max_ticks_limit: 535
-register_counter: 21
+register_target: 536              # Zielposition (LOGO liest und fährt dahin)
+register_max_ticks_limit: 535     # Max. Fahrweg-Limit (Sicherheit)
+register_counter: 21              # Position-Backup (für Recovery bei LOGO-Neustart)
 
 # TODO: LOGO COILS - Coil-Nummern für Motor
 coil_up: 8305
@@ -265,6 +265,11 @@ coil_down: 8306
 **Wo finde ich die Werte?**
 - LOGO-Programm (TIA Portal oder LOGO! Soft Comfort)
 - Mqtt-Topic-Liste (z.B. MQTT Explorer)
+
+**Was macht `register_counter`?**
+- **Position-Backup bei LOGO-Neustart**: HA speichert kontinuierlich die Position
+- Wenn LOGO neu startet (Position → 0): HA schreibt letzten Wert zurück
+- Verhindert "vergessene" Positionen nach Stromausfall
 
 #### C) Kalibrierung
 
@@ -278,13 +283,16 @@ tilt_ticks_open: 14
 min_motor_ticks: 5
 ```
 
-#### D) Tilt-Konfiguration
+#### D) Tilt-Konfiguration (OPTIONAL)
 
 ```yaml
-# TODO: TILT-KONFIGURATION
+# OPTIONAL: Defaults sind 75% / 80%
+# Nur überschreiben wenn diese Jalousie andere Werte braucht
 tilt_target_default: 75        # Standard-Neigung beim Toggle (0-100%)
 tilt_position_threshold_pct: 80  # Max. Position für Tilt
 ```
+
+**Hinweis**: Diese Werte haben **Defaults im Blueprint** (75% / 80%). Du kannst sie weglassen, wenn die Defaults passen!
 
 ### Schritt 4: Datei in Home Assistant laden
 
