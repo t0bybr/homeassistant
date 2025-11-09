@@ -19,6 +19,42 @@
 # MQTT Topics:
 # - logo/register/set/<register>: Zielposition in Ticks
 # - logo/coil/set/<coil>: Motor an/aus (ON/OFF)
+#
+# =========================================================
+# FÜR NEUE JALOUSIEN: TODO-LISTE
+# =========================================================
+# Wenn du eine neue Jalousie einrichtest, musst du folgende Werte anpassen:
+#
+# 1. MQTT SENSOREN (von deiner LOGO-Konfiguration abhängig):
+#    - position_ticks_sensor_entity_id: sensor.mosquitto_broker_mqtt_logo_hr_XXX_position_raw
+#    - movement_status_sensor_entity_id: sensor.mosquitto_broker_mqtt_logo_hr_XXX_status
+#    - up_button_entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_X
+#    - down_button_entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_Y
+#    → Überall in diesem File suchen nach "hr_104" und "coil_9/8/8303/8304"
+#
+# 2. LOGO REGISTER & COILS:
+#    - register_target: XXX (LOGO Register für Zielposition)
+#    - register_max_ticks_limit: XXX (LOGO Register für max. Fahrweg)
+#    - register_counter: XXX (LOGO Register für Position-Backup)
+#    - coil_up: XXXX (LOGO Coil zum Hochfahren)
+#    - coil_down: XXXX (LOGO Coil zum Runterfahren)
+#
+# 3. KALIBRIERUNG (durch Messen ermitteln):
+#    - max_travel_ticks: XXX (Gesamter Fahrweg 0% → 100%)
+#    - tilt_ticks_close: XX (Ticks von horizontal zu vertikal, typ. 14)
+#    - tilt_ticks_open: XX (Ticks von vertikal zu horizontal, typ. 15)
+#    - min_motor_ticks: X (Minimale Motorlaufzeit, typ. 5)
+#
+# 4. TILT-KONFIGURATION:
+#    - tilt_target_default: XX (Standard-Neigung beim Toggle, typ. 75%)
+#    - tilt_position_threshold_pct: XX (Max. Position für Tilt, typ. 80%)
+#
+# 5. ENTITY-NAMEN:
+#    - Alle "blinds_0_living_room_west" durch deinen Raum-Slug ersetzen
+#    - name: "living_room_west" (im Blueprint)
+#    - floor: "0" (Stockwerk)
+#
+# Suche im File nach "TODO:" für alle Stellen die angepasst werden müssen!
 # =========================================================
 
 # =========================================================
@@ -145,7 +181,7 @@ input_number:
     max: 50
     step: 1
     mode: box
-    initial: 14
+    initial: 14  # TODO: KALIBRIERUNG - Messen: Ticks von horizontal zu vertikal
     icon: mdi:arrow-collapse-vertical
 
   blinds_0_living_room_west_tilt_ticks_open:
@@ -154,7 +190,7 @@ input_number:
     max: 50
     step: 1
     mode: box
-    initial: 15
+    initial: 15  # TODO: KALIBRIERUNG - Messen: Ticks von vertikal zu horizontal
     icon: mdi:arrow-expand-vertical
 
   blinds_0_living_room_west_min_motor_ticks:
@@ -163,7 +199,7 @@ input_number:
     max: 10
     step: 1
     mode: box
-    initial: 5
+    initial: 5  # TODO: KALIBRIERUNG - Minimale Bewegung die Motor ausführt (typ. 5)
     icon: mdi:timer-cog
 
 counter:
@@ -183,8 +219,10 @@ binary_sensor:
         friendly_name: "Jalousie West - Tilt verfügbar"
         icon_template: mdi:check-circle
         value_template: >
+          {# TODO: MQTT SENSOREN - Sensor-IDs anpassen (hr_104) #}
           {% set status = states('sensor.mosquitto_broker_mqtt_logo_hr_104_status') | int(0) %}
           {% set pos = states('sensor.mosquitto_broker_mqtt_logo_hr_104_position_raw') | int(0) %}
+          {# TODO: KALIBRIERUNG - max_travel_ticks anpassen (552) #}
           {% set pos_pct = (100.0 * pos / 552) | round(0) | int %}
           {{ status == 1 and pos_pct < 80 }}
 
@@ -196,29 +234,37 @@ automation:
   - use_blueprint:
       path: t0bybr/blinds.yaml
       input:
-        name: "living_room_west"
-        floor: "0"
+        name: "living_room_west"  # TODO: Raum-Slug anpassen (z.B. bedroom_east)
+        floor: "0"  # TODO: Stockwerk anpassen (z.B. "1" für erstes OG)
 
-        cover_entity: cover.blinds_0_living_room_west
+        cover_entity: cover.blinds_0_living_room_west  # TODO: Entsprechend anpassen
 
+        # TODO: MQTT SENSOREN - Button-Entitäten von deiner LOGO-Konfiguration
         up_button_entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_9
         down_button_entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_8
 
+        # TODO: MQTT SENSOREN - Position und Status von deiner LOGO-Konfiguration
         position_ticks_sensor_entity_id: sensor.mosquitto_broker_mqtt_logo_hr_104_position_raw
         movement_status_sensor_entity_id: sensor.mosquitto_broker_mqtt_logo_hr_104_status
 
         # Tilt Entity (für Trigger)
         tilt_enabled_entity_id: input_boolean.blinds_0_living_room_west_tilt_enabled
 
+        # TODO: LOGO COILS - Coil-Nummern für Motor (z.B. 8303, 8304)
         coil_up: 8303
         coil_down: 8304
+
+        # TODO: LOGO REGISTER - Register-Nummern (z.B. 535, 534, 20)
         register_target: 535
         register_max_ticks_limit: 534
         register_counter: 20
+
+        # TODO: KALIBRIERUNG - Gesamter Fahrweg in Ticks (messen!)
         max_travel_ticks: 552
 
-        # Tilt-Konfiguration
+        # TODO: TILT-KONFIGURATION - Zielneigung beim Toggle (typ. 75%)
         tilt_target_default: 75
+        # TODO: TILT-KONFIGURATION - Max. Position für Tilt (typ. 80%)
         tilt_position_threshold_pct: 80
 
 # =========================================================
@@ -234,7 +280,9 @@ cover:
 
         # Prozent-Position aus Ticks
         position_template: >
+          {# TODO: Entity-Namen anpassen (blinds_0_living_room_west) #}
           {% set max_travel_ticks = states('input_number.blinds_0_living_room_west_max_travel_ticks') | int(1) %}
+          {# TODO: MQTT SENSOREN - Sensor-ID anpassen (hr_104) #}
           {% set current_ticks    = states('sensor.mosquitto_broker_mqtt_logo_hr_104_position_raw') | float(0) %}
           {% if max_travel_ticks > 0 %}
             {{ (current_ticks / max_travel_ticks * 100) | round(0) }}
@@ -244,6 +292,7 @@ cover:
 
         # Status aus LOGO (0/1/2/3)
         value_template: >
+          {# TODO: MQTT SENSOREN - Sensor-ID anpassen (hr_104) #}
           {% set s = states('sensor.mosquitto_broker_mqtt_logo_hr_104_status') | int(0) %}
           {% if   s == 1 %} open
           {% elif s == 3 %} opening
@@ -255,11 +304,13 @@ cover:
         open_cover:
           sequence:
             # State auf moving_user setzen
+            # TODO: Entity-Namen anpassen (blinds_0_living_room_west_state)
             - action: input_select.select_option
               target:
                 entity_id: input_select.blinds_0_living_room_west_state
               data:
                 option: "moving_user"
+            # TODO: Entity-Namen anpassen (blinds_0_living_room_west_logo_register_target)
             - action: mqtt.publish
               data:
                 topic: "logo/register/set/{{ states('input_number.blinds_0_living_room_west_logo_register_target') | int }}"
@@ -274,11 +325,13 @@ cover:
         close_cover:
           sequence:
             # State auf moving_user setzen
+            # TODO: Entity-Namen anpassen (blinds_0_living_room_west_state)
             - action: input_select.select_option
               target:
                 entity_id: input_select.blinds_0_living_room_west_state
               data:
                 option: "moving_user"
+            # TODO: Entity-Namen anpassen (blinds_0_living_room_west_logo_register_target)
             - action: mqtt.publish
               data:
                 topic: "logo/register/set/{{ states('input_number.blinds_0_living_room_west_logo_register_target') | int }}"
@@ -292,6 +345,7 @@ cover:
         # --- Stop (10000 bestätigen) ---
         stop_cover:
           sequence:
+            # TODO: Entity-Namen anpassen (blinds_0_living_room_west_logo_register_target)
             - action: mqtt.publish
               data:
                 topic: "logo/register/set/{{ states('input_number.blinds_0_living_room_west_logo_register_target') | int }}"
@@ -301,14 +355,17 @@ cover:
         set_cover_position:
           sequence:
             # State auf moving_user setzen
+            # TODO: Entity-Namen anpassen (blinds_0_living_room_west_state)
             - action: input_select.select_option
               target:
                 entity_id: input_select.blinds_0_living_room_west_state
               data:
                 option: "moving_user"
             - variables:
+                # TODO: Entity-Namen anpassen (blinds_0_living_room_west_max_travel_ticks)
                 max_travel_ticks: "{{ states('input_number.blinds_0_living_room_west_max_travel_ticks') | int(1) }}"
                 target_ticks: "{{ (position | float(0) / 100 * max_travel_ticks) | int(0) }}"
+            # TODO: Entity-Namen anpassen (blinds_0_living_room_west_logo_register_target)
             - action: mqtt.publish
               data:
                 topic: "logo/register/set/{{ states('input_number.blinds_0_living_room_west_logo_register_target') | int }}"
@@ -316,4 +373,5 @@ cover:
             # Hinweis: '10000'-Bestätigung erfolgt im Blueprint bei 2/3→0/1
 
         # --- Tilt-Anzeige: zeigt aktuelle Neigung ---
+        # TODO: Entity-Namen anpassen (blinds_0_living_room_west_tilt_current)
         tilt_template: "{{ states('input_number.blinds_0_living_room_west_tilt_current') | int(0) }}"

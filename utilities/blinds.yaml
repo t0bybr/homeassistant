@@ -95,6 +95,7 @@ script:
               - wait_template: "{{ states(status_sensor) | int(0) in [0,1] }}"
                 timeout: "00:00:10"
 
+              # Motor-Pause (gleicher Grund wie in Referenz-Methode)
               - delay: "00:00:02"
 
               - action: input_number.set_value
@@ -112,9 +113,24 @@ script:
             data: { option: "idle" }
           - stop: "Tilt disabled - moved to 0%"
 
-      # Berechne Delta und entscheide: Direkt oder Referenz-Methode
+      # === DIREKT vs. REFERENZ-METHODE ENTSCHEIDUNG ===
+      #
+      # PROBLEM: Motor kann sehr kleine Bewegungen nicht präzise ausführen (< min_motor_ticks)
+      #          Außerdem: tilt_ticks_close (14) ≠ tilt_ticks_open (15) führt zu Drift
+      #
+      # LÖSUNG: 2 Methoden:
+      #   1. DIREKT-Methode: Bewegung direkt zum Ziel (wenn groß genug)
+      #      - Einfach: current_pos + delta_ticks
+      #      - Nur bei delta >= min_motor_ticks UND delta > 0 (hoch fahren)
+      #
+      #   2. REFERENZ-Methode: Über 0%-Referenzpunkt (bei kleinen/negativen Deltas)
+      #      - Schritt 1: Runter zu 0% (vertikal, using tilt_ticks_close)
+      #      - Schritt 2: Hoch zu target% (using tilt_ticks_open)
+      #      - Garantiert konsistente Position (immer relativ zu 0%)
+      #      - Vermeidet Drift durch unterschiedliche Kalibrierungswerte
+      #
       # WICHTIG: Ziel-Position immer von 0% aus berechnen (nur tilt_ticks_open)
-      # um konsistente Positionen zu garantieren, egal von welcher Richtung wir kommen
+      #          um konsistente Positionen zu garantieren, egal von welcher Richtung wir kommen
       - variables:
           delta_pct: "{{ tilt_target - tilt_current }}"
           # Ticks für positives Delta (Direkt-Methode)
@@ -132,7 +148,10 @@ script:
             target: { entity_id: "{{ tilt_lock_entity }}" }
           - stop: "Tilt already at target"
 
-      # Generiere Sequence ID
+      # === SEQUENCE-ID GENERIEREN ===
+      # Verhindert Race-Conditions bei Multi-Step-Operationen (Referenz-Methode)
+      # Wenn während Schritt 1 eine neue Operation startet, wird die Sequence-ID überschrieben
+      # → Bei Schritt 2 erkennen wir die Änderung und brechen ab (kein "Zombie-Completion")
       - variables:
           seq_id: "{{ now().timestamp() | string }}"
       - action: input_text.set_value
@@ -193,7 +212,11 @@ script:
                   # State lässt Blueprint
                   - stop: "Sequence interrupted at step 1"
 
-              # Motor-Pause vor Richtungswechsel
+              # === MOTOR-PAUSE VOR RICHTUNGSWECHSEL ===
+              # WICHTIG: 2 Sekunden Pause zwischen runter (Schritt 1) und hoch (Schritt 2)
+              # Grund: Motor braucht mechanische Zeit für Richtungswechsel
+              # Zu kurze Pause → Motor springt nicht an oder verhält sich unvorhersehbar
+              # Getestet: 0.5s zu kurz, 1.5s manchmal zu kurz, 2s funktioniert zuverlässig
               - delay: "00:00:02"
 
               # Schritt 2: Zu target% Tilt (hoch)
@@ -229,8 +252,14 @@ script:
         target: { entity_id: "{{ sequence_id_entity }}" }
         data: { value: "" }
 
-      # State VERZÖGERT zurücksetzen (2s) damit alle movement_ended_tilt Trigger durch sind
-      # Verhindert Race Condition: Trigger kommen NACH Lock-Release und würden tilt_current überschreiben
+      # === VERZÖGERTER STATE-RESET (Race-Condition-Fix) ===
+      # PROBLEM: movement_ended_tilt Trigger in Blueprint könnte NACH diesem Script feuern
+      #          und tilt_current überschreiben (basierend auf Fahrtrichtung)
+      # LÖSUNG: State VERZÖGERT zurücksetzen (2s), damit alle Trigger durch sind
+      #         Blueprint filtert movement_ended_tilt wenn state in ['moving_tilt', 'adjusting_tilt_ref']
+      #         → Während wir im Tilt-State bleiben, werden die Trigger ignoriert
+      #         → Nach 2s sind alle Trigger durch, dann erst zurück auf 'idle'
+      # Getestet: 2s ist ausreichend für alle Trigger-Verarbeitung
       - delay: "00:00:02"
       - action: input_select.select_option
         target: { entity_id: "{{ state_entity }}" }

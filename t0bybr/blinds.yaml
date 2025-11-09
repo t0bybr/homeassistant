@@ -392,7 +392,9 @@ action:
               position: "{{ states(var_position_ticks_sensor_entity_id) | int(0) }}"
               position_pct: "{{ (100.0 * position / var_max_travel_ticks_value) | round(0) | int }}"
 
-              # Lookahead: Würde Tilt Position >= 80% machen?
+              # === LOOKAHEAD-BERECHNUNG ===
+              # Prüft ob Tilt-Anpassung die Jalousie >= 80% fahren würde (dann nicht erlaubt)
+              # Problem: Referenz-Methode macht 2 Schritte (runter+hoch), müssen beide berücksichtigen
               tilt_current: "{{ states(var_tilt_current_entity_id) | int(0) }}"
               tilt_target: "{{ states(var_tilt_target_entity_id) | int(75) }}"
               delta_pct: "{{ tilt_target - tilt_current }}"
@@ -402,6 +404,7 @@ action:
                   {{ (delta_pct / 100.0 * states(var_tilt_ticks_open_entity_id) | int(15)) | round(0) | int }}
                 {% elif delta_pct < 0 %}
                   {# Referenz-Methode: Runter auf 0%, dann hoch auf target% #}
+                  {# Netto-Bewegung = -tilt_ticks_close (runter) + target_ticks (hoch) #}
                   {% set tilt_ticks_close = states(var_tilt_ticks_close_entity_id) | int(14) %}
                   {% set tilt_ticks_open = states(var_tilt_ticks_open_entity_id) | int(15) %}
                   {% set target_ticks = (tilt_target / 100.0 * tilt_ticks_open) | round(0) | int %}
@@ -412,9 +415,10 @@ action:
               position_after_tilt: "{{ position + tilt_ticks_needed }}"
               position_after_tilt_pct: "{{ (100.0 * position_after_tilt / var_max_travel_ticks_value) | round(0) | int }}"
 
+          # === ENDLOSSCHLEIFEN-FIX: Auto-Disable Detection ===
           # WICHTIG: Wenn tilt_enabled von ON → OFF gewechselt hat bei >= 80%,
           # dann wurde das durch Auto-Disable ausgelöst und wir sollten NICHTS machen
-          # (sonst Endlosschleife durch Zurücksetzen)
+          # (sonst Endlosschleife: Auto-Disable schaltet OFF → tilt_toggle versucht zurückzusetzen → triggert wieder)
           - if: "{{ not tilt_enabled and tilt_enabled_before and position_pct >= 80 }}"
             then:
               - stop: "Auto-Disable hat tilt_enabled ausgeschaltet, nichts zu tun"
@@ -441,8 +445,13 @@ action:
               - action: input_boolean.turn_{{ 'on' if trigger.from_state.state == 'on' else 'off' }}
                 target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
 
-      # Trigger: Fahrt endet (Auto-Korrektur)
-      # Nur wenn KEINE Tilt-Operation läuft (sonst würde tilt_current überschrieben)
+      # === Trigger: Fahrt endet (Auto-Korrektur) ===
+      # === RACE-CONDITION-FIX ===
+      # Filtert movement_ended_tilt Trigger wenn Tilt-Operation läuft
+      # Problem: apply_tilt setzt tilt_current am Ende, aber DANACH triggert movement_ended_tilt
+      #          und würde tilt_current überschreiben (basierend auf Fahrtrichtung)
+      # Lösung: State-Check in conditions-Block (nicht im trigger, da HA das nicht unterstützt)
+      #         + 2s verzögertes State-Reset in utilities/blinds.yaml (damit alle Trigger durch sind)
       - conditions:
           - "{{ trigger.id == 'movement_ended_tilt' }}"
           - "{{ trigger.from_state.state in ['2', '3'] }}"
@@ -461,7 +470,10 @@ action:
               position_pct: "{{ (100.0 * position / var_max_travel_ticks_value) | round(0) | int }}"
               dir_before: "{{ trigger.from_state.state | int(0) }}"
 
-          # Auto-Disable Check ZUERST (verhindert unnötigen apply_tilt Aufruf)
+          # === AUTO-DISABLE CHECK ===
+          # Wenn Position >= 80% und Tilt noch aktiv: Tilt deaktivieren
+          # Grund: Bei hohen Positionen können Lamellen nicht sinnvoll geneigt werden
+          # ZUERST prüfen, verhindert unnötigen apply_tilt Aufruf
           - if: "{{ position_pct >= var_tilt_position_threshold_pct and tilt_enabled }}"
             then:
               - action: input_boolean.turn_off
@@ -471,8 +483,12 @@ action:
                 data: { value: 100 }
               - stop: "Auto-Disable at position >= 80%"
 
-          # tilt_current setzen basierend auf Fahrt-Richtung
-          # (State-Check erfolgt bereits in conditions-Block)
+          # === TILT_CURRENT AUTOMATISCH SETZEN ===
+          # Nach jeder Fahrt setzen wir tilt_current basierend auf Fahrt-Richtung:
+          # - 2 (closing/runter) → 0% (vertikal geschlossen, Lamellen zu)
+          # - 3 (opening/hoch) → 100% (horizontal offen, Lamellen ganz geöffnet)
+          # Nur wenn tilt_lock=OFF (sonst läuft gerade eine Tilt-Operation)
+          # State-Check erfolgt bereits in conditions-Block oben
           - if: "{{ not tilt_lock }}"
             then:
               - action: input_number.set_value
@@ -480,7 +496,9 @@ action:
                 data:
                   value: "{{ 0 if dir_before == 2 else 100 }}"
 
-          # Lookahead berechnen
+          # === LOOKAHEAD-BERECHNUNG ===
+          # Prüft ob Tilt-Anpassung die Jalousie >= 80% fahren würde
+          # Identisch zur Berechnung im tilt_toggle Trigger (Code-Duplikation nötig, da 2 Trigger)
           - variables:
               tilt_current: "{{ states(var_tilt_current_entity_id) | int(0) }}"
               tilt_target: "{{ states(var_tilt_target_entity_id) | int(75) }}"
@@ -491,6 +509,7 @@ action:
                   {{ (delta_pct / 100.0 * states(var_tilt_ticks_open_entity_id) | int(15)) | round(0) | int }}
                 {% elif delta_pct < 0 %}
                   {# Referenz-Methode: Runter auf 0%, dann hoch auf target% #}
+                  {# Netto-Bewegung = -tilt_ticks_close (runter) + target_ticks (hoch) #}
                   {% set tilt_ticks_close = states(var_tilt_ticks_close_entity_id) | int(14) %}
                   {% set tilt_ticks_open = states(var_tilt_ticks_open_entity_id) | int(15) %}
                   {% set target_ticks = (tilt_target / 100.0 * tilt_ticks_open) | round(0) | int %}
