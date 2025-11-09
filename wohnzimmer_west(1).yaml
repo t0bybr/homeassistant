@@ -163,7 +163,7 @@ input_number:
     max: 10
     step: 1
     mode: box
-    initial: 5
+    initial: 3
     icon: mdi:timer-cog
 
 counter:

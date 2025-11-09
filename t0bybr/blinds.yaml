@@ -386,6 +386,7 @@ action:
           # Variablen sammeln
           - variables:
               tilt_enabled: "{{ is_state(var_tilt_enabled_entity_id, 'on') }}"
+              tilt_enabled_before: "{{ trigger.from_state.state == 'on' }}"
               tilt_lock: "{{ is_state(var_tilt_lock_entity_id, 'on') }}"
               status: "{{ states(var_status_sensor_entity_id) | int(0) }}"
               position: "{{ states(var_position_ticks_sensor_entity_id) | int(0) }}"
@@ -405,6 +406,13 @@ action:
                 {% endif %}
               position_after_tilt: "{{ position + tilt_ticks_needed }}"
               position_after_tilt_pct: "{{ (100.0 * position_after_tilt / var_max_travel_ticks_value) | round(0) | int }}"
+
+          # WICHTIG: Wenn tilt_enabled von ON → OFF gewechselt hat bei >= 80%,
+          # dann wurde das durch Auto-Disable ausgelöst und wir sollten NICHTS machen
+          # (sonst Endlosschleife durch Zurücksetzen)
+          - if: "{{ not tilt_enabled and tilt_enabled_before and position_pct >= 80 }}"
+            then:
+              - stop: "Auto-Disable hat tilt_enabled ausgeschaltet, nichts zu tun"
 
           # DEBUG Notification
           - action: persistent_notification.create
