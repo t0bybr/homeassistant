@@ -242,6 +242,16 @@ script:
                 target: { entity_id: "{{ state_entity }}" }
                 data: { option: "adjusting_tilt_ref" }
 
+              # DEBUG: Schritt 1 beginnt
+              - action: persistent_notification.create
+                data:
+                  title: "🔽 Referenz Schritt 1 startet"
+                  message: |
+                    Fahre runter auf 0% (vertikal)
+                    Von: {{ current_pos }} ticks
+                    Zu: {{ current_pos - tilt_ticks_close }} ticks
+                    (-{{ tilt_ticks_close }} ticks)
+
               # Schritt 1: Zu 0% Tilt (runter)
               - action: mqtt.publish
                 data:
@@ -251,21 +261,57 @@ script:
               - wait_template: "{{ states(status_sensor) | int(0) in [0,1] }}"
                 timeout: "00:00:10"
 
+              - action: persistent_notification.create
+                data:
+                  title: "⏱️ Referenz Schritt 1 - Wait beendet"
+                  message: |
+                    Status: {{ states(status_sensor) }}
+                    Position jetzt: {{ states(position_sensor) }} ticks
+                    Wait completed: {{ wait.completed }}
+
               # Prüfe Sequence ID (mit String-Cast)
               - if: "{{ (states(sequence_id_entity) | string) != (seq_id | string) }}"
                 then:
+                  - action: persistent_notification.create
+                    data:
+                      title: "🚨 Referenz Schritt 1 INTERRUPTED!"
+                      message: |
+                        Sequence ID aktuell: "{{ states(sequence_id_entity) }}"
+                        Sequence ID erwartet: "{{ seq_id }}"
                   # Lock aufheben
                   - action: input_boolean.turn_off
                     target: { entity_id: "{{ tilt_lock_entity }}" }
                   # State lässt Blueprint
                   - stop: "Sequence interrupted at step 1"
 
+              - action: persistent_notification.create
+                data:
+                  title: "⏸️ Referenz - Delay 1.5s"
+                  message: "Motor-Pause vor Schritt 2..."
+
               - delay: "00:00:01.5"
+
+              # DEBUG: Schritt 2 beginnt
+              - action: persistent_notification.create
+                data:
+                  title: "🔄 Referenz Schritt 2 startet"
+                  message: |
+                    Current position: {{ states(position_sensor) }} ticks
+                    Target ticks from 0%: {{ (tilt_target / 100.0 * tilt_ticks_open) | round(0) | int }}
+                    MQTT payload wird sein: {{ states(position_sensor) | int(0) + ((tilt_target / 100.0 * tilt_ticks_open) | round(0) | int) }}
 
               # Schritt 2: Zu target% Tilt (hoch)
               - variables:
                   ticks_for_target: "{{ (tilt_target / 100.0 * tilt_ticks_open) | round(0) | int }}"
                   new_pos: "{{ states(position_sensor) | int(0) }}"
+
+              - action: persistent_notification.create
+                data:
+                  title: "📤 Referenz Schritt 2 - MQTT"
+                  message: |
+                    Topic: logo/register/set/{{ register_target }}
+                    Payload: {{ new_pos + ticks_for_target }}
+                    ({{ new_pos }} + {{ ticks_for_target }})
 
               - action: mqtt.publish
                 data:
@@ -275,14 +321,33 @@ script:
               - wait_template: "{{ states(status_sensor) | int(0) in [0,1] }}"
                 timeout: "00:00:10"
 
+              - action: persistent_notification.create
+                data:
+                  title: "⏱️ Referenz Schritt 2 - Wait beendet"
+                  message: |
+                    Status: {{ states(status_sensor) }}
+                    Wait completed: {{ wait.completed }}
+                    Timeout reached: {{ wait.remaining == 0 if wait.completed else 'N/A' }}
+
               # Prüfe Sequence ID (mit String-Cast)
               - if: "{{ (states(sequence_id_entity) | string) != (seq_id | string) }}"
                 then:
+                  - action: persistent_notification.create
+                    data:
+                      title: "🚨 Referenz Schritt 2 INTERRUPTED!"
+                      message: |
+                        Sequence ID aktuell: "{{ states(sequence_id_entity) }}"
+                        Sequence ID erwartet: "{{ seq_id }}"
                   # Lock aufheben
                   - action: input_boolean.turn_off
                     target: { entity_id: "{{ tilt_lock_entity }}" }
                   # State lässt Blueprint
                   - stop: "Sequence interrupted at step 2"
+
+              - action: persistent_notification.create
+                data:
+                  title: "✅ Referenz Schritt 2 - tilt_current setzen"
+                  message: "Setze tilt_current auf {{ tilt_target }}%"
 
               - action: input_number.set_value
                 target: { entity_id: "{{ tilt_current_entity }}" }
