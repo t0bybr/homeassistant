@@ -398,9 +398,14 @@ action:
               delta_pct: "{{ tilt_target - tilt_current }}"
               tilt_ticks_needed: >
                 {% if delta_pct > 0 %}
+                  {# Direkt-Methode: Einfach delta Ticks nach oben #}
                   {{ (delta_pct / 100.0 * states(var_tilt_ticks_open_entity_id) | int(15)) | round(0) | int }}
                 {% elif delta_pct < 0 %}
-                  {{ (delta_pct / 100.0 * states(var_tilt_ticks_close_entity_id) | int(14)) | round(0) | int }}
+                  {# Referenz-Methode: Runter auf 0%, dann hoch auf target% #}
+                  {% set tilt_ticks_close = states(var_tilt_ticks_close_entity_id) | int(14) %}
+                  {% set tilt_ticks_open = states(var_tilt_ticks_open_entity_id) | int(15) %}
+                  {% set target_ticks = (tilt_target / 100.0 * tilt_ticks_open) | round(0) | int %}
+                  {{ -tilt_ticks_close + target_ticks }}
                 {% else %}
                   0
                 {% endif %}
@@ -517,9 +522,14 @@ action:
               delta_pct: "{{ tilt_target - tilt_current }}"
               tilt_ticks_needed: >
                 {% if delta_pct > 0 %}
+                  {# Direkt-Methode: Einfach delta Ticks nach oben #}
                   {{ (delta_pct / 100.0 * states(var_tilt_ticks_open_entity_id) | int(15)) | round(0) | int }}
                 {% elif delta_pct < 0 %}
-                  {{ (delta_pct / 100.0 * states(var_tilt_ticks_close_entity_id) | int(14)) | round(0) | int }}
+                  {# Referenz-Methode: Runter auf 0%, dann hoch auf target% #}
+                  {% set tilt_ticks_close = states(var_tilt_ticks_close_entity_id) | int(14) %}
+                  {% set tilt_ticks_open = states(var_tilt_ticks_open_entity_id) | int(15) %}
+                  {% set target_ticks = (tilt_target / 100.0 * tilt_ticks_open) | round(0) | int %}
+                  {{ -tilt_ticks_close + target_ticks }}
                 {% else %}
                   0
                 {% endif %}

@@ -139,16 +139,16 @@ script:
           - stop: "Tilt disabled - moved to 0%"
 
       # Berechne Delta und entscheide: Direkt oder Referenz-Methode
+      # WICHTIG: Ziel-Position immer von 0% aus berechnen (nur tilt_ticks_open)
+      # um konsistente Positionen zu garantieren, egal von welcher Richtung wir kommen
       - variables:
           delta_pct: "{{ tilt_target - tilt_current }}"
-          # Richtung bestimmen: runter für 0%, hoch für target%
-          ticks_for_delta: >
-            {% if delta_pct > 0 %}
-              {{ (delta_pct / 100.0 * tilt_ticks_open) | round(0) | int }}
-            {% else %}
-              {{ (delta_pct / 100.0 * tilt_ticks_close) | round(0) | int }}
-            {% endif %}
-          use_reference: "{{ (ticks_for_delta | abs) < min_motor_ticks }}"
+          # Ticks für positives Delta (Direkt-Methode)
+          ticks_for_delta: "{{ (delta_pct / 100.0 * tilt_ticks_open) | round(0) | int }}"
+          # Referenz-Methode wenn: zu klein ODER negatives Delta (von oben kommend)
+          # Bei negativem Delta verwenden wir immer Referenz, um über 0% zu gehen
+          # und die konsistente tilt_ticks_open Kalibrierung zu nutzen
+          use_reference: "{{ (ticks_for_delta | abs) < min_motor_ticks or delta_pct < 0 }}"
 
       # Wenn keine Änderung nötig → direkt beenden
       - if: "{{ delta_pct == 0 }}"
