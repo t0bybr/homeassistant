@@ -575,12 +575,7 @@ action:
                         Position nach Tilt wäre {{ position_after_tilt_pct }}% >= 80%
                         → Tilt wurde deaktiviert um Endlosschleife zu vermeiden
 
-          # State zurücksetzen wenn es ein Tilt-State war
-          - if: "{{ state_current in ['moving_tilt', 'adjusting_tilt_ref'] }}"
-            then:
-              - action: input_select.select_option
-                target: { entity_id: "{{ var_state_entity_id }}" }
-                data: { option: "idle" }
+          # State wird von apply_tilt Script selbst zurückgesetzt (utilities/blinds.yaml:286)
 
       # Trigger: Position >= 80% während Fahrt (Auto-Disable)
       - conditions: "{{ trigger.id == 'position_high_tilt' }}"

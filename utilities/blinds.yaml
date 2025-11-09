@@ -127,7 +127,10 @@ script:
                 target: { entity_id: "{{ tilt_current_entity }}" }
                 data: { value: "0" }
 
-          # Lock aufheben
+          # Cleanup: State + Lock
+          - action: input_select.select_option
+            target: { entity_id: "{{ state_entity }}" }
+            data: { option: "idle" }
           - action: input_boolean.turn_off
             target: { entity_id: "{{ tilt_lock_entity }}" }
           - stop: "Tilt disabled - moved to 0%"
@@ -282,13 +285,15 @@ script:
                 target: { entity_id: "{{ tilt_current_entity }}" }
                 data: { value: "{{ tilt_target }}" }
 
-      # Cleanup: Lock aufheben + Sequence ID leeren
+      # Cleanup: State + Lock + Sequence ID
+      - action: input_select.select_option
+        target: { entity_id: "{{ state_entity }}" }
+        data: { option: "idle" }
       - action: input_boolean.turn_off
         target: { entity_id: "{{ tilt_lock_entity }}" }
       - action: input_text.set_value
         target: { entity_id: "{{ sequence_id_entity }}" }
         data: { value: "" }
-      # State setzt Blueprint zurück (Zeile 587 in blinds.yaml)
 
   # -------------------------------------------------------
   # Langdruck (Coil halten, bis Button losgelassen / Timeout)
