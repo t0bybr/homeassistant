@@ -466,7 +466,10 @@ action:
                     - Lookahead: Tilt würde Position >= 80% machen
 
       # Trigger: Fahrt endet (Auto-Korrektur)
-      - conditions: "{{ trigger.id == 'movement_ended_tilt' }}"
+      # Nur wenn KEINE Tilt-Operation läuft (sonst würde tilt_current überschrieben)
+      - conditions:
+          - "{{ trigger.id == 'movement_ended_tilt' }}"
+          - "{{ states(var_state_entity_id) not in ['moving_tilt', 'adjusting_tilt_ref'] }}"
         sequence:
           # Safety Delay
           - delay: "00:00:01"
@@ -495,9 +498,8 @@ action:
               - stop: "Auto-Disable at position >= 80%"
 
           # tilt_current setzen basierend auf Fahrt-Richtung
-          # ABER NUR wenn es KEINE Tilt-Operation war!
-          # State Machine ist "Single Source of Truth"
-          - if: "{{ not tilt_lock and state_current not in ['moving_tilt', 'adjusting_tilt_ref'] }}"
+          # (State-Check erfolgt bereits in conditions-Block)
+          - if: "{{ not tilt_lock }}"
             then:
               - action: input_number.set_value
                 target: { entity_id: "{{ var_tilt_current_entity_id }}" }
