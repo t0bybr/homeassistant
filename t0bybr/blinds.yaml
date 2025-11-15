@@ -1,56 +1,24 @@
 # =========================================================
-# README · Jalousie – LOGO/MQTT Tastersteuerung (Stop/Counter/Tilt)
-# ---------------------------------------------------------
-# Funktionen
-# - Taster Hoch/Runter: Kurz-/Langdruck, Sofort-Stop
-# - Tilt-Steuerung in Ticks: adaptiver, richtungsabhängiger Schritt je Klick/Slider
-# - Fahrende-Erkennung über Statussensor (2/3 → 0/1) mit LOGO-Bestätigung (10000)
-# - HA-Start: Max-Fahrweg/-dauer (Ticks-Limit) in LOGO schreiben
-#
-# Wichtige Signale
-# - position_ticks_sensor: aktueller Weg (Ticks 0..max_travel_ticks)
-# - movement_status_sensor: 0=closed, 1=idle/open, 2=closing, 3=opening
-# - var_tilt_flag_entity_id: input_boolean.*_tilted (manuelles Toggle)
-# - Cover-Tilt: current_tilt_position (Slider im UI) → ruft unser Tilt-Utility
-#
-# Kalibrierung (pro Jalousie im use_blueprint angeben)
-# - open_step_ticks_at_closed / _at_open
-# - close_step_ticks_at_closed / _at_open
-# - min_step_ticks
-# → Siehe Kalibrier-Anleitung unten im Kommentarblock.
-#
-# Fahrprinzip
-# - Tilt-Änderung (Flag/Slider) triggert util_blinds_tilt_step_ticks_dir.
-# - Fahrtende (2/3→0/1) bestätigt LOGO mit 10000, merkt letzte Richtung
-#   und fährt optional (bei Tilt=on) einen zusätzlichen adaptiven Schritt.
-# =========================================================
-# KALIBRIER-ANLEITUNG (Ticks)
-# 1) max_travel_ticks messen (100% Weg).
-# 2) open_step_ticks_at_closed: unten (≈0 Ticks) klein „hoch“, bis Kipp erkennbar → ΔTicks.
-# 3) open_step_ticks_at_open:   oben (≈max) klein „hoch“ → ΔTicks.
-# 4) close_step_ticks_at_closed: unten klein „runter“ → ΔTicks.
-# 5) close_step_ticks_at_open:   oben klein „runter“ → ΔTicks.
-# 6) min_step_ticks = Mindestschritt (typ. 1–3).
-# Script interpoliert zwischen *_at_closed (r=0) und *_at_open (r=1).
-# Richtung kommt aus var_last_moving_state_number_entity_id (2/3).
+# Jalousie Blueprint – LOGO/MQTT Tastersteuerung mit State Machine
 # =========================================================
 
 blueprint:
-  name: Jalousie – LOGO/MQTT Tastersteuerung (Stop/Counter/Tilt)
+  name: Jalousie – LOGO/MQTT mit State Machine & einfachem Tilt
   description: >
-    Tastersteuerung mit Kurz/Langdruck, adaptiver Tilt-Schrittlogik in Ticks
-    und sicherer LOGO-Bestätigung am Fahrtende. Tilt kann per Flag oder Cover-Slider ausgelöst werden.
+    Jalousie-Steuerung mit State Machine, Kurz/Langdruck und einfachem Tilt:
+    2× Hoch toggelt tilt_enabled (Bool) und fährt die Lamellen:
+    - ON: auf tilt_target (abhängig von letzter Nicht-Tilt-Fahrtrichtung)
+    - OFF: zurück zur Basisstellung.
+    Wenn bei aktivem Tilt eine andere Fahrt endet, wird Tilt nur deaktiviert.
   domain: automation
   input:
-    # Identifikation
     name:
-      name: "Raum-Slug (z. B. wohnzimmer_west)"
+      name: "Raum-Slug (z. B. dining_room)"
       selector: { text: { multiline: false } }
     floor:
       name: "Stockwerk-Slug (z. B. 0)"
       selector: { text: { multiline: false } }
 
-    # Taster
     up_button_entity_id:
       name: "Taster Hoch (binary_sensor)"
       selector: { entity: { filter: [{ domain: binary_sensor }] } }
@@ -58,17 +26,14 @@ blueprint:
       name: "Taster Runter (binary_sensor)"
       selector: { entity: { filter: [{ domain: binary_sensor }] } }
 
-    # Cover
     cover_entity:
       name: "Cover-Entität (Template-Cover)"
       selector: { entity: { filter: [{ domain: cover }] } }
 
-    # Interner State (input_select)
-    state_entity_id:
-      name: "State-Helper (input_select.*_state)"
-      selector: { entity: { filter: [{ domain: input_select }] } }
+    tilt_enabled_entity_id:
+      name: "Tilt Enabled Entity (input_boolean)"
+      selector: { entity: { filter: [{ domain: input_boolean }] } }
 
-    # Tilt-Konfiguration
     tilt_target_default:
       name: "Standard-Neigung beim Toggle (0-100%)"
       selector: { number: { min: 0, max: 100, step: 5, mode: slider } }
@@ -76,11 +41,10 @@ blueprint:
 
     tilt_position_threshold_pct:
       name: "Maximale Position für Tilt (%)"
-      description: "Tilt nur verfügbar wenn Position < dieser Wert"
+      description: "Tilt nur verfügbar wenn Position < dieser Wert (nur UI-Flag)"
       selector: { number: { min: 0, max: 100, step: 5, mode: slider } }
       default: 80
 
-    # LOGO/MQTT Parameter
     coil_up:
       name: "LOGO Coil: hoch"
       selector: { number: { min: 1, max: 9999, mode: box } }
@@ -93,8 +57,10 @@ blueprint:
     register_max_ticks_limit:
       name: "LOGO Register: max. Fahrweg/-dauer (Ticks-Limit)"
       selector: { number: { min: 1, max: 9999, mode: box } }
+    register_counter:
+      name: "LOGO Register: Counter/Position (für Backup)"
+      selector: { number: { min: 1, max: 9999, mode: box } }
 
-    # Skalierung & Sensoren
     max_travel_ticks:
       name: "Max. Fahrweg in Ticks (100%)"
       selector: { number: { min: 1, max: 5000, mode: box } }
@@ -108,82 +74,72 @@ blueprint:
 mode: parallel
 max: 10
 
-# -----------------------------
-# TRIGGER
-# -----------------------------
 trigger:
-  # Taster
   - trigger: state
     entity_id: !input up_button_entity_id
     from: "off"
     to: "on"
+    id: button_up
+
   - trigger: state
     entity_id: !input down_button_entity_id
     from: "off"
     to: "on"
+    id: button_down
 
-  # HA-Start → Limit setzen
   - trigger: homeassistant
     event: start
+    id: ha_start
 
-  # Automations-Reload → Limit erneut setzen
   - trigger: event
     event_type: automation_reloaded
+    id: automation_reload
 
-  # Positionsänderung (Ticks) – für Tilt-Reset > Schwelle
-  - trigger: state
-    entity_id: !input position_ticks_sensor_entity_id
-
-  # Statuswechsel (Fahrt beginnt/endet)
   - trigger: state
     entity_id: !input movement_status_sensor_entity_id
+    id: status_change
 
-  # Statewechsel (für Tilt-Nachstellung bei Rückkehr nach idle)
   - trigger: state
-    entity_id: !input state_entity_id
+    entity_id: !input position_ticks_sensor_entity_id
+    id: position_change
 
-  # Wind-Sensor
   - trigger: state
     entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_20
+    id: wind_change
 
-# -----------------------------
-# VARIABLEN (sprechende Namen)
-# -----------------------------
+  - trigger: state
+    entity_id: !input tilt_enabled_entity_id
+    id: tilt_toggle
+
 variables:
-  # Slugs
   var_floor_slug: !input floor
   var_room_slug: !input name
 
-  # Entitäten, die als Inputs kommen
   var_cover_entity_id: !input cover_entity
 
-  # Abgeleitete Entitäten (müssen zu deinen Helpers passen!)
-  var_state_entity_id: !input state_entity_id
-  var_sequence_id_entity_id: "input_text.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_sequence_id"
+  var_state_entity_id: "input_select.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_state"
 
   var_counting_flag_entity_id: "input_boolean.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_counting"
   var_click_counter_entity_id: "counter.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_clicks"
   var_last_direction_text_entity_id: "input_text.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_last_direction_text"
 
-  # Letzter Bewegungsstatus (input_number, 2=closing, 3=opening)
+  var_position_state_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_position_state"
   var_last_moving_state_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_last_moving_state"
   var_position_backup_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_position_backup"
+  var_movement_start_ticks_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_movement_start_ticks"
 
-  # Tilt-Entitäten
   var_tilt_enabled_entity_id: "input_boolean.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_enabled"
-  var_tilt_current_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_current"
   var_tilt_target_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_target"
+  var_tilt_available_entity_id: "input_boolean.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_available"
+  var_tilt_lock_entity_id: "input_boolean.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_lock"
   var_tilt_ticks_close_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_ticks_close"
   var_tilt_ticks_open_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_tilt_ticks_open"
-  var_min_motor_ticks_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_min_motor_ticks"
 
-  # UI-/Helper (sichtbar in HA) – **an deine Namen angepasst**
   var_target_register_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_logo_register_target"
   var_max_travel_ticks_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_max_travel_ticks"
   var_coil_up_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_logo_coil_up"
   var_coil_down_number_entity_id: "input_number.blinds_{{ var_floor_slug }}_{{ var_room_slug }}_logo_coil_down"
 
-  # Inputs aus Blueprint
   var_status_sensor_entity_id: !input movement_status_sensor_entity_id
   var_up_button_entity_id: !input up_button_entity_id
   var_down_button_entity_id: !input down_button_entity_id
@@ -195,19 +151,15 @@ variables:
   var_coil_up_value: !input coil_up
   var_coil_down_value: !input coil_down
 
-  # Tilt-Konfiguration (aus Inputs)
   var_tilt_target_default: !input tilt_target_default
   var_tilt_position_threshold_pct: !input tilt_position_threshold_pct
 
-# -----------------------------
-# ACTIONS
-# -----------------------------
 action:
   - choose:
       # Wind-Ende Sync
       - conditions: >
           {{
-            trigger.entity_id == 'binary_sensor.mosquitto_broker_mqtt_logo_coil_20'
+            trigger.id == 'wind_change'
             and trigger.from_state.state == 'on'
             and trigger.to_state.state == 'off'
           }}
@@ -215,12 +167,12 @@ action:
           - action: mqtt.publish
             data:
               topic: "logo/register32/set/{{ var_logo_register_counter }}"
-              payload: "{{ states(var_max_travel_ticks_value) | int }}"
+              payload: "{{ var_max_travel_ticks_value }}"
 
-      # Wenn die Logo neu startet und die Positionswerte nicht mehr passen
+      # LOGO-Reset: Position korrigieren
       - conditions: >
           {{
-            trigger.entity_id == var_position_ticks_sensor_entity_id
+            trigger.id == 'position_change'
             and (trigger.to_state.state is not none)
             and (trigger.to_state.state | int in [0])
             and (states(var_position_backup_number_entity_id) | int(-1) not in [0])
@@ -231,10 +183,10 @@ action:
               topic: "logo/register32/set/{{ var_logo_register_counter }}"
               payload: "{{ states(var_position_backup_number_entity_id) | int }}"
 
-      # Positionswert in Backup schreiben
+      # Position → Backup & Tilt-Availability
       - conditions: >
           {{
-            trigger.entity_id == var_position_ticks_sensor_entity_id
+            trigger.id == 'position_change'
             and (trigger.to_state.state is not none)
           }}
         sequence:
@@ -244,16 +196,40 @@ action:
             data:
               value: "{{ states(var_position_ticks_sensor_entity_id) | int }}"
 
-      # Fahrt startet: 0/1 → 2/3 → Tilt-Current aktualisieren
+          - variables:
+              _pos: "{{ states(var_position_ticks_sensor_entity_id) | int(0) }}"
+              _status: "{{ states(var_status_sensor_entity_id) | int(0) }}"
+              _pos_pct: "{{ (100.0 * _pos / var_max_travel_ticks_value) | round(0) | int }}"
+              _avail: "{{ _status == 1 and _pos_pct < var_tilt_position_threshold_pct }}"
+          - choose:
+              - conditions: "{{ _avail }}"
+                sequence:
+                  - action: input_boolean.turn_on
+                    target: { entity_id: "{{ var_tilt_available_entity_id }}" }
+              - conditions: "{{ not _avail }}"
+                sequence:
+                  - action: input_boolean.turn_off
+                    target: { entity_id: "{{ var_tilt_available_entity_id }}" }
+
       - conditions: >
           {{
-            trigger.entity_id == var_status_sensor_entity_id
+            trigger.id == 'status_change'
+          }}
+        sequence:
+          - action: input_number.set_value
+            target: { entity_id: "{{ var_position_state_number_entity_id }}" }
+            data:
+              { value: "{{ states(var_status_sensor_entity_id) | float(0) }}" }
+
+      # Fahrt startet: 0/1 → 2/3
+      - conditions: >
+          {{
+            trigger.id == 'status_change'
             and (trigger.from_state is not none)
             and (trigger.from_state.state | int(0)) in [0,1]
             and (trigger.to_state.state   | int(0)) in [2,3]
           }}
         sequence:
-          # Fallback: Start aus idle → als moving_automation markieren
           - if: "{{ states(var_state_entity_id) == 'idle' }}"
             then:
               - action: input_select.select_option
@@ -261,25 +237,55 @@ action:
                 data: { option: "moving_automation" }
 
           - variables:
-              new_status: "{{ trigger.to_state.state | int(0) }}"
-          # Update tilt_current basierend auf Fahrtrichtung
-          - action: input_number.set_value
-            target: { entity_id: "{{ var_tilt_current_entity_id }}" }
-            data:
-              value: >
-                {% if new_status == 3 %}
-                  100
-                {% elif new_status == 2 %}
-                  0
-                {% else %}
-                  {{ states(var_tilt_current_entity_id) | int(0) }}
-                {% endif %}
-          - stop: "Tilt current updated on movement start"
+              current_ticks_start: "{{ states(var_position_ticks_sensor_entity_id) | int(0) }}"
+              _tilt_enabled: "{{ is_state(var_tilt_enabled_entity_id, 'on') }}"
+              _tilt_lock: "{{ is_state(var_tilt_lock_entity_id, 'on') }}"
 
-      # Fahrt endet: 2/3 → 0/1 → bestätigen + Richtung speichern
+          #    Auto-Off für Tilt, wenn die Jalousie bei aktivem Tilt bewegt wird
+          #    (aber NICHT, wenn gerade ein Tilt-Script läuft → _tilt_lock)
+          - if:
+              - "{{ _tilt_enabled }}"
+              - "{{ not _tilt_lock }}"
+            then:
+              - action: input_boolean.turn_off
+                target: { entity_id: "{{ var_tilt_enabled_entity_id }}" }
+
+          - action: input_number.set_value
+            target: { entity_id: "{{ var_movement_start_ticks_entity_id }}" }
+            data: { value: "{{ current_ticks_start }}" }
+
+          # last_moving_state nur aktualisieren, wenn kein Tilt läuft
+          - if: "{{
+              not _tilt_lock
+              and (states(var_status_sensor_entity_id) | int) in [2, 3]
+              }}"
+            then:
+              - action: input_number.set_value
+                target:
+                  { entity_id: "{{ var_last_moving_state_number_entity_id }}" }
+                data:
+                  { value: "{{ states(var_status_sensor_entity_id) | int }}" }
+
+          - variables:
+              _pos: "{{ states(var_position_ticks_sensor_entity_id) | int(0) }}"
+              _status: "{{ states(var_status_sensor_entity_id) | int(0) }}"
+              _pos_pct: "{{ (100.0 * _pos / var_max_travel_ticks_value) | round(0) | int }}"
+              _avail: "{{ _status == 1 and _pos_pct < var_tilt_position_threshold_pct }}"
+          - choose:
+              - conditions: "{{ _avail }}"
+                sequence:
+                  - action: input_boolean.turn_on
+                    target: { entity_id: "{{ var_tilt_available_entity_id }}" }
+              - conditions: "{{ not _avail }}"
+                sequence:
+                  - action: input_boolean.turn_off
+                    target: { entity_id: "{{ var_tilt_available_entity_id }}" }
+          - stop: "Movement start handled"
+
+      # Fahrt endet: 2/3 → 0/1
       - conditions: >
           {{
-            trigger.entity_id == var_status_sensor_entity_id
+            trigger.id == 'status_change'
             and (trigger.from_state is not none)
             and (trigger.from_state.state | int(0)) in [2,3]
             and (trigger.to_state.state   | int(0)) in [0,1]
@@ -289,61 +295,20 @@ action:
           - choose:
               - conditions: "{{ states(var_status_sensor_entity_id) | int(0) in [0,1] }}"
                 sequence:
-                  # Bestätigung an LOGO
                   - action: mqtt.publish
                     data:
                       topic: "logo/register/set/{{ var_logo_register_target }}"
                       payload: "10000"
 
-                  # Letzte Richtung merken
-                  - variables:
-                      dir_before: "{{ trigger.from_state.state | int(0) }}"
-                  - action: input_number.set_value
-                    target: { entity_id: "{{ var_last_moving_state_number_entity_id }}" }
-                    data: { value: "{{ dir_before }}" }
-
-                  # State zurück auf idle (wenn nicht durch Tilt-Script geändert)
-                  - if: "{{ states(var_state_entity_id) in ['moving_user', 'moving_automation'] }}"
+                  - if: "{{ states(var_state_entity_id) in ['moving_user', 'moving_automation', 'moving_wind'] }}"
                     then:
                       - action: input_select.select_option
                         target: { entity_id: "{{ var_state_entity_id }}" }
                         data: { option: "idle" }
-          - stop: "Handled stop + tilt"
+          - stop: "Handled movement end"
 
-      # State → idle: Tilt anwenden (nur nach User/Automation-Fahrten)
-      - conditions: >
-          {{
-            trigger.entity_id == var_state_entity_id
-            and (trigger.from_state is not none)
-            and (trigger.from_state.state | string) in ['moving_user','moving_automation']
-            and (trigger.to_state.state   | string) == 'idle'
-          }}
-        sequence:
-          - variables:
-              current_pct: >
-                {% set ticks = states(var_position_ticks_sensor_entity_id) | int(0) %}
-                {% set max_ticks = var_max_travel_ticks_value | int(1) %}
-                {{ (100.0 * ticks / max_ticks) | round(0) | int }}
-              tilt_enabled: "{{ is_state(var_tilt_enabled_entity_id, 'on') }}"
-
-          - if: >
-              {{ tilt_enabled and current_pct < var_tilt_position_threshold_pct }}
-            then:
-              - action: script.util_blinds_apply_tilt
-                data:
-                  floor_slug: "{{ var_floor_slug }}"
-                  room_slug: "{{ var_room_slug }}"
-          - stop: "Applied tilt on idle"
-
-      # HA-Start/Reload → LOGO-Limit & UI-Helper syncen + State initialisieren
-      - conditions: >
-          {{
-            trigger.platform == 'homeassistant'
-            or (
-              trigger.platform == 'event'
-              and trigger.event.event_type == 'automation_reloaded'
-            )
-          }}
+      # HA-Start/Reload
+      - conditions: "{{ trigger.id in ['ha_start', 'automation_reload'] }}"
         sequence:
           - action: mqtt.publish
             data:
@@ -361,59 +326,76 @@ action:
           - action: input_number.set_value
             target: { entity_id: "{{ var_coil_down_number_entity_id }}" }
             data: { value: "{{ var_coil_down_value }}" }
-          # State auf idle zurücksetzen
+
           - action: input_select.select_option
             target: { entity_id: "{{ var_state_entity_id }}" }
             data: { option: "idle" }
-          # Sequence ID leeren
-          - action: input_text.set_value
-            target: { entity_id: "{{ var_sequence_id_entity_id }}" }
-            data: { value: "" }
-          # Tilt-Target initialisieren wenn noch leer
+
           - if: "{{ states(var_tilt_target_entity_id) | int(0) == 0 }}"
             then:
               - action: input_number.set_value
                 target: { entity_id: "{{ var_tilt_target_entity_id }}" }
                 data: { value: "{{ var_tilt_target_default }}" }
 
-      # Taster gedrückt → Sofort-Stop, dann Kurz-/Langdruck mit State-Management
-      - conditions: >
-          {{
-            trigger.platform == 'state'
-            and trigger.entity_id in [var_up_button_entity_id, var_down_button_entity_id]
-          }}
+      # ========================================
+      # TILT-CONTROLLER
+      # ========================================
+
+      - conditions: "{{
+          (trigger.id == 'tilt_toggle')
+          and (is_state(var_state_entity_id, 'idle'))
+          }}"
+        sequence:
+          - delay: "00:00:01"
+
+          - if: "{{ states(var_tilt_target_entity_id) | int(0) == 0 }}"
+            then:
+              - action: input_number.set_value
+                target: { entity_id: "{{ var_tilt_target_entity_id }}" }
+                data: { value: "{{ var_tilt_target_default }}" }
+
+          - choose:
+              # Tilt ON → Fahre auf tilt_target
+              - conditions: "{{ trigger.to_state.state == 'on' }}"
+                sequence:
+                  - action: script.util_blinds_tilt_simple
+                    data:
+                      floor_slug: "{{ var_floor_slug }}"
+                      room_slug: "{{ var_room_slug }}"
+                      tilt_mode: "on"
+                      position_sensor_entity_id: "{{ var_position_ticks_sensor_entity_id }}"
+                      last_moving_state_entity_id: "{{ var_last_moving_state_number_entity_id }}"
+
+              # Tilt OFF → zurück zur Basis
+              - conditions: "{{ trigger.to_state.state == 'off' }}"
+                sequence:
+                  - action: script.util_blinds_tilt_simple
+                    data:
+                      floor_slug: "{{ var_floor_slug }}"
+                      room_slug: "{{ var_room_slug }}"
+                      tilt_mode: "off"
+                      position_sensor_entity_id: "{{ var_position_ticks_sensor_entity_id }}"
+                      last_moving_state_entity_id: "{{ var_last_moving_state_number_entity_id }}"
+
+      # Taster gedrückt → Stop / Kurz / Lang
+      - conditions: "{{ trigger.id in ['button_up', 'button_down'] }}"
         sequence:
           - variables:
-              is_up_press: "{{ trigger.entity_id == var_up_button_entity_id }}"
+              is_up_press: "{{ trigger.id == 'button_up' }}"
               status_now: "{{ states(var_status_sensor_entity_id) | int(0) }}"
               state_current: "{{ states(var_state_entity_id) }}"
 
-          # Sofort-Stop wenn in Bewegung
           - if:
               - condition: template
                 value_template: "{{ status_now in [2,3] or states(var_cover_entity_id) in ['opening','closing'] }}"
             then:
               - action: cover.stop_cover
                 target: { entity_id: "{{ var_cover_entity_id }}" }
-              # State auf idle setzen
               - action: input_select.select_option
                 target: { entity_id: "{{ var_state_entity_id }}" }
                 data: { option: "idle" }
               - stop: "Stopped because cover was moving"
 
-          # Nur weitermachen wenn idle
-          - if:
-              - condition: template
-                value_template: "{{ state_current != 'idle' }}"
-            then:
-              - stop: "Not in idle state, ignoring button press"
-
-          # State auf moving_user setzen
-          - action: input_select.select_option
-            target: { entity_id: "{{ var_state_entity_id }}" }
-            data: { option: "moving_user" }
-
-          # Kurz/Langdruck (0.6s)
           - wait_template: "{{ is_state( (var_up_button_entity_id if is_up_press else var_down_button_entity_id), 'off') }}"
             timeout: "00:00:0.6"
             continue_on_timeout: true
@@ -422,12 +404,19 @@ action:
               # Langdruck
               - conditions: "{{ not wait.completed }}"
                 sequence:
+                  - if: "{{ state_current == 'idle' }}"
+                    then:
+                      - action: input_select.select_option
+                        target: { entity_id: "{{ var_state_entity_id }}" }
+                        data: { option: "moving_user" }
+
                   - action: script.util_blinds_longpress
                     data:
                       is_up: "{{ is_up_press }}"
                       coil_up_value: "{{ var_coil_up_value }}"
                       coil_down_value: "{{ var_coil_down_value }}"
                       pressed_button_entity_id: "{{ var_up_button_entity_id if is_up_press else var_down_button_entity_id }}"
+
               # Kurz-/Mehrfachklick
               - conditions: "{{ wait.completed }}"
                 sequence:
@@ -440,3 +429,4 @@ action:
                       cover_entity_id: "{{ var_cover_entity_id }}"
                       floor_slug: "{{ var_floor_slug }}"
                       room_slug: "{{ var_room_slug }}"
+                      state_entity_id: "{{ var_state_entity_id }}"
