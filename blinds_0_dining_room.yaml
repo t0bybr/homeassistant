@@ -1,0 +1,272 @@
+# =========================================================
+# Jalousie Esszimmer – Konfiguration
+# =========================================================
+
+# (Kommentare gekürzt auf den aktuellen Stand)
+
+input_boolean:
+  blinds_0_dining_room_counting:
+    name: "Jalousie Esszimmer - Klick-Zählfenster aktiv"
+    icon: mdi:timer-sand
+  blinds_0_dining_room_tilt_enabled:
+    name: "Jalousie Esszimmer - Neigung aktiviert"
+    icon: mdi:blinds
+  blinds_0_dining_room_tilt_lock:
+    name: "Jalousie Esszimmer - Tilt Operation Lock (intern)"
+    initial: false
+    icon: mdi:lock
+  blinds_0_dining_room_tilt_available:
+    name: "Jalousie Esszimmer - Tilt verfügbar"
+    icon: mdi:check-circle
+
+input_select:
+  blinds_0_dining_room_state:
+    name: "Jalousie Esszimmer - Status"
+    options:
+      - idle
+      - moving_user
+      - moving_automation
+      - moving_wind
+    initial: idle
+    icon: mdi:state-machine
+
+input_text:
+  blinds_0_dining_room_last_direction_text:
+    name: "Jalousie Esszimmer - Letzte Tastenrichtung"
+
+input_number:
+  blinds_0_dining_room_max_travel_ticks:
+    name: "Jalousie Esszimmer - Max. Fahrweg (Ticks)"
+    min: 0
+    max: 999
+    mode: box
+    step: 1
+    icon: mdi:map-marker-distance
+
+  blinds_0_dining_room_position_backup:
+    name: "Jalousie Esszimmer - Position Backup (intern)"
+    min: 0
+    max: 999
+    mode: box
+    step: 1
+
+  blinds_0_dining_room_movement_start_ticks:
+    name: "Jalousie Esszimmer - Last Movement Start (Ticks)"
+    min: 0
+    max: 999
+    mode: box
+    step: 1
+
+  blinds_0_dining_room_logo_register_counter:
+    name: "Jalousie Esszimmer - LOGO Register Counter"
+    min: 0
+    max: 999
+    mode: box
+    step: 1
+
+  blinds_0_dining_room_logo_register_target:
+    name: "Jalousie Esszimmer - LOGO Register Target"
+    min: 0
+    max: 9999
+    mode: box
+    step: 1
+
+  blinds_0_dining_room_logo_register_max_ticks_limit:
+    name: "Jalousie Esszimmer - LOGO Register Max Ticks Limit"
+    min: 0
+    max: 9999
+    mode: box
+    step: 1
+
+  blinds_0_dining_room_logo_coil_up:
+    name: "Jalousie Esszimmer - LOGO Coil Hoch"
+    min: 0
+    max: 9999
+    mode: box
+    step: 1
+
+  blinds_0_dining_room_logo_coil_down:
+    name: "Jalousie Esszimmer - LOGO Coil Runter"
+    min: 0
+    max: 9999
+    mode: box
+    step: 1
+
+  blinds_0_dining_room_position_state:
+    name: "Jalousie Esszimmer - Aktueller Bewegungsstatus"
+    min: 0
+    max: 3
+    mode: box
+    step: 1
+    icon: mdi:arrow-up-down
+
+  blinds_0_dining_room_last_moving_state:
+    name: "Jalousie Esszimmer - Letzter Bewegungsstatus"
+    min: 0
+    max: 3
+    mode: box
+    step: 1
+    icon: mdi:arrow-up-down
+
+  # Tilt-System (vereinfachte Variante – nur Zielwert)
+  blinds_0_dining_room_tilt_target:
+    name: "Jalousie Esszimmer - Ziel-Neigung"
+    min: 0
+    max: 100
+    step: 5
+    mode: slider
+    unit_of_measurement: "%"
+    initial: 75
+    icon: mdi:target
+
+  blinds_0_dining_room_tilt_ticks_close:
+    name: "Jalousie Esszimmer - Ticks für Tilt (runter)"
+    min: 0
+    max: 50
+    step: 1
+    mode: box
+    initial: 14
+    icon: mdi:arrow-collapse-vertical
+
+  blinds_0_dining_room_tilt_ticks_open:
+    name: "Jalousie Esszimmer - Ticks für Tilt (hoch)"
+    min: 0
+    max: 50
+    step: 1
+    mode: box
+    initial: 15
+    icon: mdi:arrow-expand-vertical
+
+counter:
+  blinds_0_dining_room_clicks:
+    name: "Jalousie Esszimmer - Klickzähler"
+    initial: 0
+    icon: mdi:counter
+
+automation:
+  - use_blueprint:
+      path: t0bybr/blinds.yaml
+      input:
+        name: "dining_room"
+        floor: "0"
+
+        cover_entity: cover.blinds_0_dining_room
+
+        up_button_entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_1
+        down_button_entity_id: binary_sensor.mosquitto_broker_mqtt_logo_coil_0
+
+        position_ticks_sensor_entity_id: sensor.mosquitto_broker_mqtt_logo_hr_101_position_raw
+        movement_status_sensor_entity_id: sensor.mosquitto_broker_mqtt_logo_hr_101_status
+
+        tilt_enabled_entity_id: input_boolean.blinds_0_dining_room_tilt_enabled
+
+        coil_up: 8307
+        coil_down: 8308
+
+        register_target: 530
+        register_max_ticks_limit: 528
+        register_counter: 5
+
+        max_travel_ticks: 440
+        # Optional:
+        # tilt_target_default: 75
+        # tilt_position_threshold_pct: 80
+
+cover:
+  - platform: template
+    covers:
+      blinds_0_dining_room:
+        friendly_name: "Jalousie Esszimmer"
+        unique_id: "blinds_0_dining_room"
+
+        position_template: >
+          {% set max_travel_ticks = states('input_number.blinds_0_dining_room_max_travel_ticks') | int(1) %}
+          {% set current_ticks    = states('input_number.blinds_0_dining_room_position_backup') | float(0) %}
+          {% if max_travel_ticks > 0 %}
+            {{ (current_ticks / max_travel_ticks * 100) | round(0) }}
+          {% else %}
+            0
+          {% endif %}
+
+        value_template: >
+          {% set s = states('input_number.blinds_0_dining_room_position_state') | int(0) %}
+          {% if   s == 1 %} open
+          {% elif s == 3 %} opening
+          {% elif s == 2 %} closing
+          {% else        %} closed
+          {% endif %}
+
+        open_cover:
+          sequence:
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.blinds_0_dining_room_state
+              data:
+                option: "moving_user"
+            - action: mqtt.publish
+              data:
+                topic: "logo/register/set/{{ states('input_number.blinds_0_dining_room_logo_register_target') | int }}"
+                payload: "10000"
+            - delay: "00:00:0.2"
+            - action: mqtt.publish
+              data:
+                topic: "logo/register/set/{{ states('input_number.blinds_0_dining_room_logo_register_target') | int }}"
+                payload: "{{ states('input_number.blinds_0_dining_room_max_travel_ticks') | int }}"
+
+        close_cover:
+          sequence:
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.blinds_0_dining_room_state
+              data:
+                option: "moving_user"
+            - action: mqtt.publish
+              data:
+                topic: "logo/register/set/{{ states('input_number.blinds_0_dining_room_logo_register_target') | int }}"
+                payload: "10000"
+            - delay: "00:00:0.2"
+            - action: mqtt.publish
+              data:
+                topic: "logo/register/set/{{ states('input_number.blinds_0_dining_room_logo_register_target') | int }}"
+                payload: "0"
+
+        stop_cover:
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: "logo/register/set/{{ states('input_number.blinds_0_dining_room_logo_register_target') | int }}"
+                payload: "10000"
+
+        set_cover_position:
+          sequence:
+            - action: input_select.select_option
+              target:
+                entity_id: input_select.blinds_0_dining_room_state
+              data:
+                option: "moving_user"
+            - variables:
+                max_travel_ticks: "{{ states('input_number.blinds_0_dining_room_max_travel_ticks') | int(1) }}"
+                target_ticks: "{{ (position | float(0) / 100 * max_travel_ticks) | int(0) }}"
+            - action: mqtt.publish
+              data:
+                topic: "logo/register/set/{{ states('input_number.blinds_0_dining_room_logo_register_target') | int }}"
+                payload: "{{ target_ticks | int }}"
+
+        # Tilt-Anzeige ohne tilt_current:
+        # - Tilt aktiv: zeigt tilt_target
+        # - Tilt aus: zeigt 0% (zu) bei letztem Status 2, 100% (auf) bei 3, sonst 0
+        tilt_template: >
+          {% set enabled = is_state('input_boolean.blinds_0_dining_room_tilt_enabled', 'on') %}
+          {% set target  = states('input_number.blinds_0_dining_room_tilt_target') | int(0) %}
+          {% set last    = states('input_number.blinds_0_dining_room_last_moving_state') | int(0) %}
+          {% if enabled %}
+            {{ target }}
+          {% else %}
+            {% if last == 2 %}
+              0
+            {% elif last == 3 %}
+              100
+            {% else %}
+              0
+            {% endif %}
+          {% endif %}
